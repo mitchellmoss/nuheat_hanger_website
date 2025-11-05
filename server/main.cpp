@@ -321,11 +321,68 @@ std::vector<std::string> parse_allowed_origins(const std::string &value) {
   return origins;
 }
 
+std::string normalize_origin(const std::string &origin) {
+  auto trimmed = trim_copy(origin);
+  if (trimmed.empty()) {
+    return trimmed;
+  }
+
+  const auto scheme_end = trimmed.find("://");
+  if (scheme_end == std::string::npos) {
+    return to_lower_copy(trimmed);
+  }
+
+  std::string scheme = to_lower_copy(trimmed.substr(0, scheme_end));
+  std::string remainder = trimmed.substr(scheme_end + 3);
+
+  while (!remainder.empty() && remainder.back() == '/') {
+    remainder.pop_back();
+  }
+
+  std::string host = remainder;
+  std::string port;
+
+  if (!remainder.empty() && remainder.front() == '[') {
+    const auto closing = remainder.find(']');
+    if (closing != std::string::npos) {
+      host = to_lower_copy(remainder.substr(0, closing + 1));
+      if (closing + 1 < remainder.size() && remainder.at(closing + 1) == ':') {
+        port = remainder.substr(closing + 2);
+      }
+    } else {
+      host = to_lower_copy(remainder);
+    }
+  } else {
+    const auto colon_pos = remainder.find(':');
+    if (colon_pos != std::string::npos) {
+      host = to_lower_copy(remainder.substr(0, colon_pos));
+      port = remainder.substr(colon_pos + 1);
+    } else {
+      host = to_lower_copy(remainder);
+    }
+  }
+
+  port = trim_copy(port);
+  if (port.empty()) {
+    return scheme + "://" + host;
+  }
+
+  if ((scheme == "http" && port == "80") || (scheme == "https" && port == "443")) {
+    return scheme + "://" + host;
+  }
+
+  return scheme + "://" + host + ":" + port;
+}
+
 bool origin_matches(const std::vector<std::string> &allowed_origins, const std::string &origin) {
+  const auto normalized_origin = normalize_origin(origin);
   return std::any_of(allowed_origins.begin(),
                      allowed_origins.end(),
                      [&](const std::string &allowed_origin) {
-                       return allowed_origin == "*" || allowed_origin == origin;
+                       if (allowed_origin == "*") {
+                         return true;
+                       }
+                       return normalize_origin(allowed_origin) == normalized_origin;
                      });
 }
 
@@ -357,7 +414,13 @@ bool is_request_origin_allowed(const httplib::Request &req,
     return true;
   }
 
-  return origin_matches(allowed_origins, origin);
+  if (origin_matches(allowed_origins, origin)) {
+    return true;
+  }
+
+  const auto host = req.get_header_value("Host");
+  std::cerr << "[cors] Denying origin '" << origin << "' for host '" << host << "'" << std::endl;
+  return false;
 }
 
 bool is_valid_order_id(const std::string &order_id) {
