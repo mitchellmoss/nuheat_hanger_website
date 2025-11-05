@@ -17,8 +17,9 @@ export PAYPAL_CLIENT_ID PAYPAL_CLIENT_SECRET PAYPAL_ENV PAYPAL_WEBHOOK_ID ADMIN_
 
 # Resolve template/static paths so the binary can be run from repo root.
 : "${INDEX_TEMPLATE_PATH:=$SERVER_DIR/templates/index.html}"
+: "${ADMIN_TEMPLATE_PATH:=$SERVER_DIR/templates/admin.html}"
 : "${STATIC_ROOT:=$ROOT_DIR/public}"
-export INDEX_TEMPLATE_PATH STATIC_ROOT
+export INDEX_TEMPLATE_PATH ADMIN_TEMPLATE_PATH STATIC_ROOT
 
 : "${ALLOWED_ORIGINS:=http://127.0.0.1,https://nuheathanger.clipsandwedges.com,https://nuheat.clipsandwedges.com}"
 export ALLOWED_ORIGINS
