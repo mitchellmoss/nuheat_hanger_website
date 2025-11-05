@@ -23,6 +23,7 @@
 #include <mutex>
 
 using json = nlohmann::json;
+using ordered_json = nlohmann::ordered_json;
 
 namespace {
 
@@ -1218,21 +1219,28 @@ public:
                                 const std::string &cert_url,
                                 const std::string &auth_algo,
                                 const std::string &transmission_sig,
-                                const json &event_body) {
+                                const std::string &event_body_raw) {
     const auto token = fetch_access_token();
     if (!token) {
       throw std::runtime_error("Unable to retrieve PayPal access token");
     }
 
-    json request_body = {
+    ordered_json request_body = {
         {"transmission_id", transmission_id},
         {"transmission_time", transmission_time},
         {"cert_url", cert_url},
         {"auth_algo", auth_algo},
         {"transmission_sig", transmission_sig},
         {"webhook_id", webhook_id},
-        {"webhook_event", event_body},
     };
+
+    try {
+      request_body["webhook_event"] = ordered_json::parse(event_body_raw);
+    } catch (const nlohmann::json::parse_error &err) {
+      std::ostringstream oss;
+      oss << "Failed to parse webhook payload for verification: " << err.what();
+      throw std::runtime_error(oss.str());
+    }
 
     const auto url = base_url_ + "/v1/notifications/verify-webhook-signature";
     HttpResponse response = http_post(url,
@@ -2074,7 +2082,7 @@ int main() {
                                                                           cert_url,
                                                                           auth_algo,
                                                                           transmission_sig,
-                                                                          event);
+                                                                          req.body);
                       } catch (const std::exception &verify_err) {
                         res.status = 500;
                         res.set_content("Webhook verification failure", "text/plain; charset=UTF-8");
