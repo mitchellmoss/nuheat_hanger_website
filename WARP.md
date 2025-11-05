@@ -4,7 +4,7 @@ This file provides guidance to WARP (warp.dev) when working with code in this re
 
 ## Project Overview
 
-Landing page with PayPal checkout for 3D-printed NH AC0200 fault sensor hook holder. The C++ server renders HTML templates and exposes PayPal API endpoints to prevent client-side price tampering.
+Landing page with PayPal checkout for 3D-printed holders that fit the Nuheat / Mapeheat NH AC0200 fault sensor and the Nuheat MatSense Pro (AC0100) indicator. The C++ server renders HTML templates and exposes PayPal API endpoints to prevent client-side price tampering.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ Landing page with PayPal checkout for 3D-printed NH AC0200 fault sensor hook hol
 - `PayPalClient`: handles create_order() and capture_order() via PayPal REST API
 - `http_post()`, `http_post_empty()`: libcurl wrappers for HTTP requests
 - `resolve_allowed_origin()`, `is_request_origin_allowed()`: CORS validation
-- Price enforcement: hardcoded $16.89 item + $6.88 shipping = $23.77 total in `PayPalClient::create_order()`
+- Price enforcement: product catalog with hardcoded $16.89 item + $6.88 shipping (total $23.77) per option in `product_catalog()` / `PayPalClient::create_order()`
 
 **Frontend**
 - `server/templates/index.html`: landing page template with placeholder variables
@@ -65,8 +65,8 @@ rm -rf server/build
 ## Development Guidelines
 
 **Pricing Changes**
-- Update hardcoded amounts in `PayPalClient::create_order()` method (lines ~407-431 in `server/main.cpp`)
-- Adjust item price, shipping, and total value in the JSON request body
+- Update `product_catalog()` (around lines 255-270 in `server/main.cpp`) to change item and shipping amounts.
+- Ensure corresponding values in `PayPalClient::create_order()` (around lines 480-520) reflect the same totals.
 
 **Template Modifications**
 - Edit `server/templates/index.html` for content/FAQ changes

@@ -1,6 +1,6 @@
-# Nuheat / Mapeheat Fault Sensor Hook Holder Landing Page
+# Nuheat Sensor Holder Landing Page
 
-Landing page + PayPal checkout gateway for selling the 3D-printed NH AC0200 fault sensor hook holder directly (outside eBay). The C++ server renders the HTML template and exposes the PayPal API endpoints so product pricing cannot be tampered with in the browser.
+Landing page + PayPal checkout gateway for selling the 3D-printed holders for the Nuheat / Mapeheat NH AC0200 fault sensor and the Nuheat MatSense Pro (AC0100) indicator directly (outside eBay). The C++ server renders the HTML template and exposes the PayPal API endpoints so product pricing cannot be tampered with in the browser.
 
 ## Getting Started
 
@@ -10,7 +10,7 @@ Landing page + PayPal checkout gateway for selling the 3D-printed NH AC0200 faul
 ## PayPal Checkout
 
 1. Set the `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `PAYPAL_ENV` environment variables before launching the server. The client ID is baked into the rendered HTML while the secret stays server-side.
-2. The backend enforces $16.89 item price + $6.88 shipping (total $23.77). Update the values inside `PayPalClient::create_order()` in `server/main.cpp` if you change pricing.
+2. The backend enforces $16.89 item price + $6.88 shipping (total $23.77) for each product option. Update the values inside `product_catalog()` and `PayPalClient::create_order()` in `server/main.cpp` if you change pricing.
 3. After publishing, test the flow in PayPal sandbox (or a low-dollar live transaction) before sending real traffic.
 
 ## Search Engine Optimization

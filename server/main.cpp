@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <algorithm>
 #include <cctype>
+#include <array>
+#include <iomanip>
 
 using json = nlohmann::json;
 
@@ -232,6 +234,55 @@ bool is_json_content_type(const std::string &content_type_raw) {
   return mime == "application/json";
 }
 
+struct ProductOption {
+  std::string id;
+  std::string reference_id;
+  std::string description;
+  int item_price_cents;
+  int shipping_cents;
+
+  int total_price_cents() const {
+    return item_price_cents + shipping_cents;
+  }
+};
+
+std::string format_price_cents(int cents) {
+  std::ostringstream oss;
+  oss << (cents / 100) << '.' << std::setw(2) << std::setfill('0') << (cents % 100);
+  return oss.str();
+}
+
+const std::array<ProductOption, 2> &product_catalog() {
+  static const std::array<ProductOption, 2> catalog{{
+      {"ac0200-holder",
+       "NH-AC0200-HOOK-1",
+       "3D-Printed Hook Holder for NH AC0200 Fault Sensor",
+       1689,
+       688},
+      {"ac0100-holder",
+       "NH-AC0100-HOOK-1",
+       "3D-Printed Hook Holder for Nuheat MatSense Pro (AC0100)",
+       1689,
+       688},
+  }};
+  return catalog;
+}
+
+const ProductOption &default_product() {
+  const auto &catalog = product_catalog();
+  return catalog.front();
+}
+
+const ProductOption *find_product_by_id(const std::string &id) {
+  const auto &catalog = product_catalog();
+  for (const auto &product : catalog) {
+    if (product.id == id) {
+      return &product;
+    }
+  }
+  return nullptr;
+}
+
 const char kInlinePayPalHelper[] = R"(<script>
 (function () {
   var statusEl = document.getElementById('paypal-status');
@@ -243,23 +294,45 @@ const char kInlinePayPalHelper[] = R"(<script>
   var fallbackTimer;
   var buttonsRendered = false;
   var retryTimer = null;
+  var productSelector = 'input[name="product-option"]';
+
+  function getSelectedProductId() {
+    var selected = document.querySelector(productSelector + ':checked');
+    return selected ? selected.value : null;
+  }
 
   function showFallbackMessage() {
-    if (statusEl && !statusEl.textContent) {
+    if (statusEl && !statusEl.textContent && !buttonsRendered) {
       statusEl.textContent = 'Unable to load PayPal checkout. Refresh or email orders@nuheat-hanger.com to place your order.';
     }
   }
 
   function createOrderOnServer() {
+    var payload = {};
+    var selectedProduct = getSelectedProductId();
+    if (selectedProduct) {
+      payload.productId = selectedProduct;
+    }
+
     return fetch('/api/create-order', {
       method: 'POST',
       headers: {
-        'Accept': 'application/json'
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
       },
-      credentials: 'same-origin'
+      credentials: 'same-origin',
+      body: JSON.stringify(payload)
     }).then(function (res) {
       if (!res.ok) {
-        throw new Error('Failed to create order on server.');
+        return res.json().catch(function () {
+          throw new Error('Failed to create order on server.');
+        }).then(function (err) {
+          var message = err && err.error ? ' ' + err.error : '';
+          if (err && err.details) {
+            message += ' ' + err.details;
+          }
+          throw new Error('Failed to create order on server.' + message);
+        });
       }
       return res.json();
     }).then(function (data) {
@@ -340,6 +413,7 @@ const char kInlinePayPalHelper[] = R"(<script>
         return captureOrderOnServer(data.orderID).then(function (order) {
           if (statusEl) {
             window.clearTimeout(fallbackTimer);
+            fallbackTimer = null;
             var transaction = order && order.purchase_units && order.purchase_units[0] && order.purchase_units[0].payments && order.purchase_units[0].payments.captures && order.purchase_units[0].payments.captures[0];
             var txnId = transaction && transaction.id ? ' Transaction ID: ' + transaction.id + '.' : '';
             statusEl.textContent = 'Thanks! Your order is confirmed.' + txnId;
@@ -356,6 +430,7 @@ const char kInlinePayPalHelper[] = R"(<script>
         console.error('PayPal checkout error', err);
         if (statusEl) {
           window.clearTimeout(fallbackTimer);
+          fallbackTimer = null;
           statusEl.textContent = 'Something went wrong with PayPal checkout. Try again or email orders@nuheat-hanger.com.';
         }
       },
@@ -366,8 +441,21 @@ const char kInlinePayPalHelper[] = R"(<script>
       }
     });
 
-    buttons.render('#paypal-button-container').catch(function (err) {
+    buttons.render('#paypal-button-container').then(function () {
+      if (statusEl) {
+        statusEl.textContent = '';
+      }
+      if (fallbackTimer) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+      }
+    }).catch(function (err) {
       buttonsRendered = false;
+      if (statusEl) {
+        window.clearTimeout(fallbackTimer);
+        fallbackTimer = null;
+        statusEl.textContent = 'Unable to load PayPal checkout. Refresh or email orders@nuheat-hanger.com to place your order.';
+      }
       throw err;
     });
   }
@@ -398,28 +486,32 @@ public:
         client_secret_(std::move(client_secret)),
         base_url_(paypal_base_url(environment)) {}
 
-  json create_order() {
+  json create_order(const ProductOption &product) {
     const auto token = fetch_access_token();
     if (!token) {
       throw std::runtime_error("Unable to retrieve PayPal access token");
     }
 
+    const auto total_value = format_price_cents(product.total_price_cents());
+    const auto item_value = format_price_cents(product.item_price_cents);
+    const auto shipping_value = format_price_cents(product.shipping_cents);
+
     json request_body = {
         {"intent", "CAPTURE"},
         {"purchase_units",
          json::array({json{
-             {"reference_id", "NH-AC0200-HOOK-1"},
-             {"description", "3D-Printed Hook Holder for NH AC0200 Fault Sensor"},
+             {"reference_id", product.reference_id},
+             {"description", product.description},
              {"amount",
               json{
                   {"currency_code", "USD"},
-                  {"value", "23.77"},
+                  {"value", total_value},
                   {"breakdown",
                    json{
                        {"item_total",
-                        json{{"currency_code", "USD"}, {"value", "16.89"}}},
+                        json{{"currency_code", "USD"}, {"value", item_value}}},
                        {"shipping",
-                        json{{"currency_code", "USD"}, {"value", "6.88"}}},
+                        json{{"currency_code", "USD"}, {"value", shipping_value}}},
                    }},
               }},
          }})},
@@ -601,13 +693,54 @@ int main() {
                   }
 
                   try {
-                    auto order = paypal_client.create_order();
+                    std::string product_id = default_product().id;
+                    if (!req.body.empty()) {
+                      if (!is_json_content_type(req.get_header_value("Content-Type"))) {
+                        res.status = 415;
+                        json err = {{"error", "Content-Type must be application/json"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+
+                      auto body = json::parse(req.body);
+                      if (body.contains("productId")) {
+                        if (!body.at("productId").is_string()) {
+                          res.status = 400;
+                          json err = {{"error", "productId must be a string"}};
+                          res.set_content(err.dump(), "application/json");
+                          append_cors_headers(req, res, allowed_origins);
+                          return;
+                        }
+                        product_id = body.at("productId").get<std::string>();
+                      }
+                    }
+
+                    const auto *product = find_product_by_id(product_id);
+                    if (!product) {
+                      res.status = 422;
+                      json err = {{"error", "Unknown productId"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    auto order = paypal_client.create_order(*product);
                     json response = {
                         {"orderID", order.at("id")},
                         {"status", order.value("status", "UNKNOWN")},
+                        {"productId", product->id},
                     };
                     res.status = 200;
                     res.set_content(response.dump(), "application/json");
+                  } catch (const json::parse_error &ex) {
+                    res.status = 400;
+                    json err = {
+                        {"error", "Invalid JSON in request body"},
+                        {"details", ex.what()},
+                    };
+                    res.set_content(err.dump(), "application/json");
+                    std::cerr << "[error] create-order parse: " << ex.what() << std::endl;
                   } catch (const std::exception &ex) {
                     res.status = 500;
                     json err = {
