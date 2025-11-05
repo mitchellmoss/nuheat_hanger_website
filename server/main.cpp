@@ -296,6 +296,7 @@ const char kInlinePayPalHelper[] = R"(<script>
   var retryTimer = null;
   var productSelector = 'input[name="product-option"]';
   var productImageEl = document.getElementById('purchase-product-image');
+  var matchesSelector = Element.prototype.matches || Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
   var productImageMap = {
     'ac0200-holder': {
       src: 'https://nuheat.clipsandwedges.com/static/images/holder-front.jpg',
@@ -492,12 +493,22 @@ const char kInlinePayPalHelper[] = R"(<script>
       statusEl.textContent = 'Loading secure PayPal checkout…';
     }
     fallbackTimer = window.setTimeout(showFallbackMessage, 6000);
-    var productOptions = document.querySelectorAll(productSelector);
-    if (productOptions && productOptions.length && typeof productOptions.forEach === 'function') {
-      productOptions.forEach(function (option) {
-        option.addEventListener('change', updateProductImage);
-      });
-    }
+    document.addEventListener('change', function (event) {
+      if (!matchesSelector) {
+        return;
+      }
+      if (event.target && matchesSelector.call(event.target, productSelector)) {
+        updateProductImage();
+      }
+    });
+    document.addEventListener('input', function (event) {
+      if (!matchesSelector) {
+        return;
+      }
+      if (event.target && matchesSelector.call(event.target, productSelector)) {
+        updateProductImage();
+      }
+    });
     updateProductImage();
     mountPayPalButtons();
   }
