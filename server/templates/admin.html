@@ -32,6 +32,11 @@
       margin-bottom: 0.5rem;
     }
 
+    h2 {
+      font-size: 1.35rem;
+      margin-bottom: 0.75rem;
+    }
+
     p.description {
       margin-top: 0;
       margin-bottom: 1.5rem;
@@ -129,6 +134,25 @@
       font-size: 0.95rem;
     }
 
+    .panel {
+      margin-top: 1.75rem;
+    }
+
+    .panel:first-of-type {
+      margin-top: 0;
+    }
+
+    .transactions-nav {
+      margin-top: 16px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .transactions-nav button {
+      min-width: 130px;
+    }
+
     .toolbar {
       display: flex;
       justify-content: flex-end;
@@ -152,8 +176,8 @@
   <main>
     <h1>PayPal Orders Dashboard</h1>
     <p class="description">
-      Look up PayPal order and capture payloads on demand. Results come directly from PayPal’s API
-      so nothing is stored on this server.
+      Look up individual PayPal orders or captures and run transaction searches across a date range.
+      Everything is fetched directly from PayPal’s API—nothing is stored on this server.
     </p>
 
     <section id="login-section">
@@ -173,31 +197,90 @@
         <button type="button" class="secondary" id="logout-button">Sign out</button>
       </div>
 
-      <form id="lookup-form" autocomplete="off" novalidate>
-        <label for="resource-type">
-          Resource Type
-          <select id="resource-type" name="resource-type">
-            <option value="capture">Capture</option>
-            <option value="order">Order</option>
-          </select>
-        </label>
+      <section class="panel" id="lookup-panel">
+        <h2>Lookup by ID</h2>
+        <form id="lookup-form" autocomplete="off" novalidate>
+          <label for="resource-type">
+            Resource Type
+            <select id="resource-type" name="resource-type">
+              <option value="capture">Capture</option>
+              <option value="order">Order</option>
+            </select>
+          </label>
 
-        <label for="resource-id">
-          PayPal ID
-          <input id="resource-id" name="resource-id" placeholder="Enter capture or order id" required>
-        </label>
+          <label for="resource-id">
+            PayPal ID
+            <input id="resource-id" name="resource-id" placeholder="Enter capture or order id" required>
+          </label>
 
-        <button type="submit">Fetch Details</button>
-      </form>
+          <button type="submit">Fetch Details</button>
+        </form>
 
-      <div class="status" id="status" role="status" aria-live="polite"></div>
+        <div class="status" id="status" role="status" aria-live="polite"></div>
 
-      <div class="response-meta" id="response-meta" hidden>
-        <div><strong>Resource:</strong> <span id="meta-name"></span></div>
-        <div><strong>Payload keys:</strong> <span id="meta-keys"></span></div>
-      </div>
+        <div class="response-meta" id="response-meta" hidden>
+          <div><strong>Resource:</strong> <span id="meta-name"></span></div>
+          <div><strong>Payload keys:</strong> <span id="meta-keys"></span></div>
+        </div>
 
-      <pre id="result" hidden></pre>
+        <pre id="result" hidden></pre>
+      </section>
+
+      <section class="panel" id="transactions-panel">
+        <h2>Transaction Search</h2>
+        <form id="transactions-form" autocomplete="off" novalidate>
+          <label for="start-date">
+            Start (local time)
+            <input id="start-date" name="start-date" type="datetime-local" step="1" required>
+          </label>
+
+          <label for="end-date">
+            End (local time)
+            <input id="end-date" name="end-date" type="datetime-local" step="1" required>
+          </label>
+
+          <label for="page">
+            Page
+            <input id="page" name="page" type="number" inputmode="numeric" min="1" value="1">
+          </label>
+
+          <label for="page-size">
+            Page Size
+            <input id="page-size" name="page-size" type="number" inputmode="numeric" min="1" max="500" value="100">
+          </label>
+
+          <label for="transaction-status">
+            Transaction Status
+            <select id="transaction-status" name="transaction-status">
+              <option value="">All statuses</option>
+              <option value="S">Completed (S)</option>
+              <option value="P">Pending (P)</option>
+              <option value="V">Voided (V)</option>
+              <option value="D">Denied (D)</option>
+              <option value="F">Failed (F)</option>
+              <option value="C">Cancelled (C)</option>
+            </select>
+          </label>
+
+          <button type="submit">Search Transactions</button>
+        </form>
+
+        <div class="status" id="transactions-status" role="status" aria-live="polite"></div>
+
+        <div class="response-meta" id="transactions-meta" hidden>
+          <div><strong>Range:</strong> <span id="transactions-range"></span></div>
+          <div><strong>Page:</strong> <span id="transactions-page"></span></div>
+          <div><strong>Returned:</strong> <span id="transactions-count"></span></div>
+          <div><strong>Links:</strong> <span id="transactions-links"></span></div>
+        </div>
+
+        <div class="transactions-nav" id="transactions-nav" hidden>
+          <button type="button" class="secondary" id="transactions-prev" disabled>Previous Page</button>
+          <button type="button" class="secondary" id="transactions-next" disabled>Next Page</button>
+        </div>
+
+        <pre id="transactions-result" hidden></pre>
+      </section>
     </section>
   </main>
 
@@ -214,6 +297,20 @@
       const responseMeta = document.getElementById('response-meta');
       const metaName = document.getElementById('meta-name');
       const metaKeys = document.getElementById('meta-keys');
+      const transactionsForm = document.getElementById('transactions-form');
+      const transactionsStatus = document.getElementById('transactions-status');
+      const transactionsResult = document.getElementById('transactions-result');
+      const transactionsMeta = document.getElementById('transactions-meta');
+      const transactionsRange = document.getElementById('transactions-range');
+      const transactionsCount = document.getElementById('transactions-count');
+      const transactionsPage = document.getElementById('transactions-page');
+      const transactionsLinks = document.getElementById('transactions-links');
+      const transactionsNav = document.getElementById('transactions-nav');
+      const transactionsPrevButton = document.getElementById('transactions-prev');
+      const transactionsNextButton = document.getElementById('transactions-next');
+
+      let lastTransactionParams = null;
+      let lastTransactionLinks = { prev: null, next: null };
 
       function setLoginStatus(message, isError = false) {
         loginStatus.textContent = message || '';
@@ -240,11 +337,274 @@
         resultEl.hidden = false;
       }
 
+      function pad2(value) {
+        return String(value).padStart(2, '0');
+      }
+
+      function formatDateTimeLocalValue(date) {
+        return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}` +
+               `T${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+      }
+
+      function toUtcISOString(value) {
+        if (!value) {
+          return null;
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return null;
+        }
+        return date.toISOString();
+      }
+
+      function setTransactionsStatus(message, isError = false) {
+        if (!transactionsStatus) {
+          return;
+        }
+        transactionsStatus.textContent = message || '';
+        transactionsStatus.style.color = isError ? '#f87171' : '#cbd5f5';
+      }
+
+      function clearTransactionNavigation() {
+        lastTransactionParams = null;
+        lastTransactionLinks = { prev: null, next: null };
+        if (transactionsNav) {
+          transactionsNav.hidden = true;
+        }
+        if (transactionsPrevButton) {
+          transactionsPrevButton.disabled = true;
+        }
+        if (transactionsNextButton) {
+          transactionsNextButton.disabled = true;
+        }
+      }
+
+      function extractPageInfoFromHref(href) {
+        if (!href) {
+          return null;
+        }
+
+        let params = null;
+        try {
+          const url = new URL(href);
+          params = url.searchParams;
+        } catch (err) {
+          const questionIndex = href.indexOf('?');
+          if (questionIndex === -1) {
+            return null;
+          }
+          params = new URLSearchParams(href.substring(questionIndex + 1));
+        }
+
+        if (!params) {
+          return null;
+        }
+
+        const pageRaw = params.get('page');
+        if (pageRaw === null) {
+          return null;
+        }
+        const pageParsed = parseInt(pageRaw, 10);
+        if (Number.isNaN(pageParsed) || pageParsed < 1) {
+          return null;
+        }
+
+        const sizeRaw = params.get('page_size') ?? params.get('pageSize');
+        let sizeParsed = null;
+        if (sizeRaw !== null) {
+          const parsed = parseInt(sizeRaw, 10);
+          if (!Number.isNaN(parsed) && parsed > 0) {
+            sizeParsed = parsed;
+          }
+        }
+
+        return { page: pageParsed, pageSize: sizeParsed };
+      }
+
+      function updateTransactionNavigation(response, params) {
+        clearTransactionNavigation();
+
+        if (!transactionsNav || !transactionsPrevButton || !transactionsNextButton) {
+          return;
+        }
+
+        if (!response || !response.payload) {
+          return;
+        }
+
+        const links = Array.isArray(response.payload.links) ? response.payload.links : [];
+        let hasPrev = false;
+        let hasNext = false;
+
+        for (const link of links) {
+          if (!link || !link.rel || !link.href) {
+            continue;
+          }
+          const rel = String(link.rel).toLowerCase();
+          const pageInfo = extractPageInfoFromHref(link.href);
+          if (!pageInfo || !pageInfo.page) {
+            continue;
+          }
+
+          if (rel === 'prev' || rel === 'previous') {
+            if (pageInfo.pageSize == null && typeof params.pageSize === 'number') {
+              pageInfo.pageSize = params.pageSize;
+            }
+            lastTransactionLinks.prev = pageInfo;
+            hasPrev = true;
+          } else if (rel === 'next') {
+            if (pageInfo.pageSize == null && typeof params.pageSize === 'number') {
+              pageInfo.pageSize = params.pageSize;
+            }
+            lastTransactionLinks.next = pageInfo;
+            hasNext = true;
+          }
+        }
+
+        if (hasPrev || hasNext) {
+          transactionsNav.hidden = false;
+        }
+
+        transactionsPrevButton.disabled = !hasPrev;
+        transactionsNextButton.disabled = !hasNext;
+
+        if (hasPrev || hasNext) {
+          lastTransactionParams = { ...params };
+        }
+      }
+
+      function applyTransactionParamsToForm(params) {
+        if (!transactionsForm || !params) {
+          return;
+        }
+
+        const pageField = transactionsForm.elements['page'];
+        const pageSizeField = transactionsForm.elements['page-size'];
+        const statusField = transactionsForm.elements['transaction-status'];
+
+        if (pageField && typeof params.page === 'number') {
+          pageField.value = String(params.page);
+        }
+        if (pageSizeField && typeof params.pageSize === 'number') {
+          pageSizeField.value = String(params.pageSize);
+        }
+        if (statusField) {
+          statusField.value = params.transactionStatus || '';
+        }
+      }
+
+      function restoreTransactionNavigation(state) {
+        if (!state) {
+          return;
+        }
+
+        const params = state.params ? { ...state.params } : null;
+        const prevLink = state.links && state.links.prev ? { ...state.links.prev } : null;
+        const nextLink = state.links && state.links.next ? { ...state.links.next } : null;
+
+        lastTransactionParams = params;
+        lastTransactionLinks = {
+          prev: prevLink,
+          next: nextLink,
+        };
+
+        const hasPrev = !!(prevLink && prevLink.page);
+        const hasNext = !!(nextLink && nextLink.page);
+
+        if (transactionsNav) {
+          transactionsNav.hidden = !(hasPrev || hasNext);
+        }
+        if (transactionsPrevButton) {
+          transactionsPrevButton.disabled = !hasPrev;
+        }
+        if (transactionsNextButton) {
+          transactionsNextButton.disabled = !hasNext;
+        }
+
+        if (params) {
+          applyTransactionParamsToForm(params);
+        }
+      }
+
+      function showTransactionsPayload(response) {
+        if (!transactionsResult || !transactionsMeta) {
+          return;
+        }
+        if (!response || !response.payload) {
+          clearTransactionNavigation();
+          transactionsResult.hidden = true;
+          transactionsMeta.hidden = true;
+          return;
+        }
+
+        const rangeText = `${response.startDate} → ${response.endDate}`;
+        if (transactionsRange) {
+          transactionsRange.textContent = rangeText;
+        }
+        if (transactionsCount) {
+          const count = typeof response.returned === 'number' ? response.returned : 0;
+          transactionsCount.textContent = `${count} record${count === 1 ? '' : 's'}`;
+        }
+        if (transactionsPage) {
+          const pageLabel = response.page ? response.page : 1;
+          const sizeLabel = response.pageSize ? response.pageSize : 100;
+          transactionsPage.textContent = `Page ${pageLabel} • Size ${sizeLabel}`;
+        }
+        if (transactionsLinks) {
+          const links = Array.isArray(response.payload.links)
+            ? response.payload.links.map((link) => link && link.rel ? link.rel : '').filter(Boolean)
+            : [];
+          transactionsLinks.textContent = links.length ? links.join(', ') : 'none';
+        }
+
+        transactionsMeta.hidden = false;
+        transactionsResult.textContent = JSON.stringify(response.payload, null, 2);
+        transactionsResult.hidden = false;
+      }
+
+      function prepareDefaultTransactionRange() {
+        if (!transactionsForm) {
+          return;
+        }
+
+        const startField = transactionsForm.elements['start-date'];
+        const endField = transactionsForm.elements['end-date'];
+        const pageField = transactionsForm.elements['page'];
+        const pageSizeField = transactionsForm.elements['page-size'];
+
+        const now = new Date();
+        now.setMilliseconds(0);
+
+        if (endField && !endField.value) {
+          endField.value = formatDateTimeLocalValue(now);
+        }
+
+        if (startField && !startField.value) {
+          const start = new Date(now.getTime());
+          start.setDate(start.getDate() - 7);
+          start.setMilliseconds(0);
+          startField.value = formatDateTimeLocalValue(start);
+        }
+
+        if (pageField && !pageField.value) {
+          pageField.value = '1';
+        }
+
+        if (pageSizeField && !pageSizeField.value) {
+          pageSizeField.value = '100';
+        }
+      }
+
       function showLogin(message = '') {
         loginSection.hidden = false;
         dashboardSection.hidden = true;
         showPayload(null);
         setStatus('');
+        if (transactionsForm) {
+          transactionsForm.reset();
+        }
+        setTransactionsStatus('');
+        showTransactionsPayload(null);
         if (message) {
           setLoginStatus(message, true);
         } else {
@@ -270,6 +630,10 @@
         }
         if (resultEl.hidden) {
           setStatus('Enter a PayPal order or capture id to get started.');
+        }
+        prepareDefaultTransactionRange();
+        if (!transactionsResult || transactionsResult.hidden) {
+          setTransactionsStatus('Select a time range and run a transaction search.');
         }
       }
 
@@ -437,9 +801,210 @@
         }
       }
 
+      async function runTransactionSearch(params, triggerButton) {
+        if (!params) {
+          return;
+        }
+
+        if (triggerButton) {
+          triggerButton.disabled = true;
+        }
+
+        const previousState = {
+          params: lastTransactionParams ? { ...lastTransactionParams } : null,
+          links: {
+            prev: lastTransactionLinks.prev ? { ...lastTransactionLinks.prev } : null,
+            next: lastTransactionLinks.next ? { ...lastTransactionLinks.next } : null,
+          },
+        };
+
+        clearTransactionNavigation();
+        setTransactionsStatus('Fetching transaction history…');
+        showTransactionsPayload(null);
+
+        try {
+          const requestBody = {
+            startDate: params.startDate,
+            endDate: params.endDate,
+            page: params.page,
+            pageSize: params.pageSize,
+          };
+          if (params.transactionStatus) {
+            requestBody.transactionStatus = params.transactionStatus;
+          }
+          if (params.fields) {
+            requestBody.fields = params.fields;
+          }
+
+          const response = await fetch('/api/admin/paypal/transactions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify(requestBody),
+          });
+
+          let data = null;
+          try {
+            data = await response.json();
+          } catch (err) {
+            data = null;
+          }
+
+          if (response.status === 401) {
+            showLogin('Session expired. Enter the admin PIN to continue.');
+            return;
+          }
+
+          if (response.status === 403) {
+            showLogin('Origin not allowed for this dashboard.');
+            return;
+          }
+
+          if (!response.ok) {
+            const reason = data && data.error ? data.error : response.statusText;
+            setTransactionsStatus(`Transaction search failed: ${reason}`, true);
+            if (data && data.body) {
+              console.error('Transaction search error body:', data.body);
+            }
+            restoreTransactionNavigation(previousState);
+            return;
+          }
+
+          showTransactionsPayload(data);
+          updateTransactionNavigation(data, params);
+
+          const count = data && typeof data.returned === 'number' ? data.returned : 0;
+          setTransactionsStatus(`Retrieved ${count} transaction${count === 1 ? '' : 's'}.`);
+        } catch (err) {
+          console.error('Transaction search failed', err);
+          setTransactionsStatus('Unexpected error talking to the dashboard API.', true);
+          restoreTransactionNavigation(previousState);
+        } finally {
+          if (triggerButton) {
+            triggerButton.disabled = false;
+          }
+        }
+      }
+
+      async function fetchTransactions(event) {
+        event.preventDefault();
+
+        if (!transactionsForm) {
+          return;
+        }
+
+        const submitButton = transactionsForm.querySelector('button[type="submit"]');
+        const startField = transactionsForm.elements['start-date'];
+        const endField = transactionsForm.elements['end-date'];
+        const pageField = transactionsForm.elements['page'];
+        const pageSizeField = transactionsForm.elements['page-size'];
+        const statusField = transactionsForm.elements['transaction-status'];
+
+        const startIso = toUtcISOString(startField ? startField.value : '');
+        const endIso = toUtcISOString(endField ? endField.value : '');
+
+        if (!startIso || !endIso) {
+          setTransactionsStatus('Provide both start and end date/time values.', true);
+          showTransactionsPayload(null);
+          return;
+        }
+
+        if (startIso > endIso) {
+          setTransactionsStatus('Start date must be before the end date.', true);
+          showTransactionsPayload(null);
+          return;
+        }
+
+        const pageValueRaw = pageField ? pageField.value : '';
+        const pageValue = pageValueRaw ? parseInt(pageValueRaw, 10) : 1;
+        if (Number.isNaN(pageValue) || pageValue < 1) {
+          setTransactionsStatus('Page must be a positive integer.', true);
+          showTransactionsPayload(null);
+          return;
+        }
+
+        const pageSizeRaw = pageSizeField ? pageSizeField.value : '';
+        const pageSizeValue = pageSizeRaw ? parseInt(pageSizeRaw, 10) : 100;
+        if (Number.isNaN(pageSizeValue) || pageSizeValue < 1 || pageSizeValue > 500) {
+          setTransactionsStatus('Page size must be between 1 and 500.', true);
+          showTransactionsPayload(null);
+          return;
+        }
+
+        const statusValue = statusField ? statusField.value : '';
+
+        const params = {
+          startDate: startIso,
+          endDate: endIso,
+          page: pageValue,
+          pageSize: pageSizeValue,
+        };
+        if (statusValue) {
+          params.transactionStatus = statusValue;
+        }
+
+        await runTransactionSearch(params, submitButton);
+      }
+
+      async function changeTransactionPage(direction) {
+        if (!lastTransactionParams) {
+          return;
+        }
+
+        const target =
+          direction === 'next' ? lastTransactionLinks.next : lastTransactionLinks.prev;
+        if (!target || !target.page) {
+          return;
+        }
+
+        const params = {
+          ...lastTransactionParams,
+          page: target.page,
+        };
+        if (target.pageSize) {
+          params.pageSize = target.pageSize;
+        }
+
+        applyTransactionParamsToForm(params);
+        const triggerButton =
+          direction === 'next' ? transactionsNextButton : transactionsPrevButton;
+        await runTransactionSearch(params, triggerButton);
+      }
+
       loginForm.addEventListener('submit', handleLogin, { passive: false });
       logoutButton.addEventListener('click', handleLogout, { passive: false });
       lookupForm.addEventListener('submit', lookup, { passive: false });
+      if (transactionsForm) {
+        transactionsForm.addEventListener('submit', fetchTransactions, { passive: false });
+      }
+      if (transactionsPrevButton) {
+        transactionsPrevButton.addEventListener(
+          'click',
+          (event) => {
+            event.preventDefault();
+            changeTransactionPage('prev').catch((err) => {
+              console.error('Previous page fetch failed', err);
+              setTransactionsStatus('Unable to load previous page from PayPal.', true);
+            });
+          },
+          { passive: false },
+        );
+      }
+      if (transactionsNextButton) {
+        transactionsNextButton.addEventListener(
+          'click',
+          (event) => {
+            event.preventDefault();
+            changeTransactionPage('next').catch((err) => {
+              console.error('Next page fetch failed', err);
+              setTransactionsStatus('Unable to load next page from PayPal.', true);
+            });
+          },
+          { passive: false },
+        );
+      }
 
       refreshSession();
     })();

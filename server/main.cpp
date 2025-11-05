@@ -216,6 +216,22 @@ std::string trim_copy(const std::string &value) {
   return value.substr(first, last - first + 1);
 }
 
+std::string url_encode(const std::string &value) {
+  std::ostringstream escaped;
+  escaped << std::hex << std::uppercase;
+  escaped.fill('0');
+
+  for (unsigned char ch : value) {
+    if (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+      escaped << static_cast<char>(ch);
+    } else {
+      escaped << '%' << std::setw(2) << static_cast<int>(ch);
+    }
+  }
+
+  return escaped.str();
+}
+
 std::string url_decode(const std::string &value) {
   std::string result;
   result.reserve(value.size());
@@ -356,6 +372,12 @@ bool is_valid_paypal_resource_id(const std::string &value) {
   return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
     return std::isalnum(ch) || ch == '-';
   });
+}
+
+bool is_valid_rfc3339_datetime(const std::string &value) {
+  static const std::regex kPattern(
+      R"(^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$)");
+  return std::regex_match(value, kPattern);
 }
 
 bool is_json_content_type(const std::string &content_type_raw) {
@@ -1283,6 +1305,42 @@ public:
     return authorized_get("/v2/payments/captures/" + capture_id);
   }
 
+  HttpResponse get_transactions(const std::string &start_date,
+                                const std::string &end_date,
+                                const std::optional<int> &page,
+                                const std::optional<int> &page_size,
+                                const std::optional<std::string> &transaction_status,
+                                const std::optional<std::string> &fields) {
+    std::vector<std::string> query_params;
+    query_params.push_back("start_date=" + url_encode(start_date));
+    query_params.push_back("end_date=" + url_encode(end_date));
+
+    if (page && *page > 0) {
+      query_params.push_back("page=" + std::to_string(*page));
+    }
+    if (page_size && *page_size > 0) {
+      query_params.push_back("page_size=" + std::to_string(*page_size));
+    }
+    if (transaction_status && !transaction_status->empty()) {
+      query_params.push_back("transaction_status=" + url_encode(*transaction_status));
+    }
+    if (fields && !fields->empty()) {
+      query_params.push_back("fields=" + url_encode(*fields));
+    } else {
+      query_params.push_back("fields=all");
+    }
+
+    std::string query;
+    for (std::size_t i = 0; i < query_params.size(); ++i) {
+      if (i > 0) {
+        query += "&";
+      }
+      query += query_params[i];
+    }
+
+    return authorized_get("/v1/reporting/transactions?" + query);
+  }
+
   const std::string &last_verify_response() const {
     return last_verify_response_;
   }
@@ -1430,6 +1488,16 @@ int main() {
     });
 
     server.Options("/api/admin/paypal/lookup", [&](const httplib::Request &req, httplib::Response &res) {
+      if (!is_request_origin_allowed(req, allowed_origins)) {
+        res.status = 403;
+        json err = {{"error", "Origin not allowed"}};
+        res.set_content(err.dump(), "application/json");
+      } else {
+        res.status = 204;
+      }
+      append_cors_headers(req, res, allowed_origins);
+    });
+    server.Options("/api/admin/paypal/transactions", [&](const httplib::Request &req, httplib::Response &res) {
       if (!is_request_origin_allowed(req, allowed_origins)) {
         res.status = 403;
         json err = {{"error", "Origin not allowed"}};
@@ -2025,6 +2093,245 @@ int main() {
                     };
                     res.set_content(err.dump(), "application/json");
                     std::cerr << "[paypal][admin] Lookup failed: " << ex.what() << std::endl;
+                  }
+
+                  append_cors_headers(req, res, allowed_origins);
+                });
+
+    server.Post("/api/admin/paypal/transactions",
+                [&](const httplib::Request &req, httplib::Response &res) {
+                  res.set_header("Cache-Control", "no-store");
+
+                  if (!is_request_origin_allowed(req, allowed_origins)) {
+                    res.status = 403;
+                    json err = {{"error", "Origin not allowed"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (!is_admin_authenticated(req)) {
+                    res.status = 401;
+                    json err = {{"error", "Authentication required"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (!is_json_content_type(req.get_header_value("Content-Type"))) {
+                    res.status = 415;
+                    json err = {{"error", "Content-Type must be application/json"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (req.body.empty()) {
+                    res.status = 400;
+                    json err = {{"error", "Missing request body"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  try {
+                    const json body = json::parse(req.body);
+
+                    if (!body.contains("startDate") || !body.at("startDate").is_string()) {
+                      res.status = 400;
+                      json err = {{"error", "startDate is required and must be a string"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+                    if (!body.contains("endDate") || !body.at("endDate").is_string()) {
+                      res.status = 400;
+                      json err = {{"error", "endDate is required and must be a string"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    const std::string start_date = trim_copy(body.at("startDate").get<std::string>());
+                    const std::string end_date = trim_copy(body.at("endDate").get<std::string>());
+                    if (start_date.empty() || end_date.empty()) {
+                      res.status = 422;
+                      json err = {{"error", "startDate and endDate cannot be empty"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    if (!is_valid_rfc3339_datetime(start_date) || !is_valid_rfc3339_datetime(end_date)) {
+                      res.status = 422;
+                      json err = {{"error", "startDate and endDate must be RFC3339 timestamps"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    if (start_date > end_date) {
+                      res.status = 422;
+                      json err = {{"error", "startDate must be before endDate"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    int page = 1;
+                    if (body.contains("page")) {
+                      const auto &page_node = body.at("page");
+                      if (!page_node.is_number_integer()) {
+                        res.status = 400;
+                        json err = {{"error", "page must be an integer"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                      page = page_node.get<int>();
+                      if (page < 1) {
+                        res.status = 422;
+                        json err = {{"error", "page must be at least 1"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                    }
+
+                    int page_size = 100;
+                    if (body.contains("pageSize")) {
+                      const auto &size_node = body.at("pageSize");
+                      if (!size_node.is_number_integer()) {
+                        res.status = 400;
+                        json err = {{"error", "pageSize must be an integer"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                      page_size = size_node.get<int>();
+                      if (page_size < 1 || page_size > 500) {
+                        res.status = 422;
+                        json err = {{"error", "pageSize must be between 1 and 500"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                    }
+
+                    std::optional<std::string> transaction_status;
+                    if (body.contains("transactionStatus")) {
+                      if (!body.at("transactionStatus").is_string()) {
+                        res.status = 400;
+                        json err = {{"error", "transactionStatus must be a string"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                      std::string status_value =
+                          trim_copy(body.at("transactionStatus").get<std::string>());
+                      if (!status_value.empty()) {
+                        std::transform(status_value.begin(),
+                                       status_value.end(),
+                                       status_value.begin(),
+                                       [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+                        transaction_status = status_value;
+                      }
+                    }
+
+                    std::optional<std::string> fields;
+                    if (body.contains("fields")) {
+                      if (!body.at("fields").is_string()) {
+                        res.status = 400;
+                        json err = {{"error", "fields must be a string"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                      std::string fields_value = trim_copy(body.at("fields").get<std::string>());
+                      if (!fields_value.empty()) {
+                        fields = fields_value;
+                      }
+                    }
+
+                    const std::optional<int> page_param = page > 0 ? std::optional<int>(page) : std::nullopt;
+                    const std::optional<int> page_size_param =
+                        page_size > 0 ? std::optional<int>(page_size) : std::nullopt;
+
+                    HttpResponse remote = paypal_client.get_transactions(start_date,
+                                                                         end_date,
+                                                                         page_param,
+                                                                         page_size_param,
+                                                                         transaction_status,
+                                                                         fields);
+
+                    if (!remote.ok()) {
+                      res.status = remote.status == 0 ? 502 : static_cast<int>(remote.status);
+                      json err = {
+                          {"error", "Failed to retrieve transactions from PayPal"},
+                          {"status", remote.status},
+                          {"message", remote.error_message},
+                      };
+                      if (!remote.body.empty()) {
+                        err["body"] = remote.body;
+                      }
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    try {
+                      const json payload = json::parse(remote.body);
+                      std::size_t returned = 0;
+                      if (payload.contains("transaction_details") &&
+                          payload.at("transaction_details").is_array()) {
+                        returned = payload.at("transaction_details").size();
+                      }
+                      json result = {
+                          {"status", "ok"},
+                          {"startDate", start_date},
+                          {"endDate", end_date},
+                          {"page", page},
+                          {"pageSize", page_size},
+                          {"payload", payload},
+                          {"returned", returned},
+                      };
+                      if (transaction_status) {
+                        result["transactionStatus"] = *transaction_status;
+                      }
+                      if (fields) {
+                        result["fields"] = *fields;
+                      } else {
+                        result["fields"] = "all";
+                      }
+
+                      res.status = 200;
+                      res.set_content(result.dump(), "application/json");
+                      std::cout << "[paypal][admin] Transaction search start=" << start_date
+                                << " end=" << end_date << " page=" << page << " size=" << page_size
+                                << " returned=" << returned << std::endl;
+                    } catch (const json::parse_error &err) {
+                      res.status = 502;
+                      json err_payload = {
+                          {"error", "Unable to parse PayPal response"},
+                          {"details", err.what()},
+                      };
+                      res.set_content(err_payload.dump(), "application/json");
+                    }
+                  } catch (const json::parse_error &err) {
+                    res.status = 400;
+                    json err_payload = {
+                        {"error", "Invalid JSON payload"},
+                        {"details", err.what()},
+                    };
+                    res.set_content(err_payload.dump(), "application/json");
+                  } catch (const std::exception &ex) {
+                    res.status = 500;
+                    json err = {
+                        {"error", "Transaction search failed"},
+                        {"details", ex.what()},
+                    };
+                    res.set_content(err.dump(), "application/json");
+                    std::cerr << "[paypal][admin] Transaction search failed: " << ex.what() << std::endl;
                   }
 
                   append_cors_headers(req, res, allowed_origins);
