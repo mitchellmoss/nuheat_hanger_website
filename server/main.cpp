@@ -585,19 +585,6 @@ LoginDecision check_login_block(const std::string &remote_ip) {
   return LoginDecision{.allowed = true};
 }
 
-bool require_admin_session(const httplib::Request &req, httplib::Response &res) {
-  if (is_admin_authenticated(req)) {
-    return true;
-  }
-
-  res.status = 401;
-  json err = {
-      {"error", "Authentication required"},
-  };
-  res.set_content(err.dump(), "application/json");
-  return false;
-}
-
 struct ProductOption {
   std::string id;
   std::string reference_id;
@@ -1266,6 +1253,12 @@ public:
     try {
       auto payload = json::parse(response.body);
       const auto status = payload.value("verification_status", std::string());
+      const std::string serialized = payload.dump();
+      if (status != "SUCCESS") {
+        std::cerr << "[paypal] Webhook verification status=" << status << " response=" << serialized
+                  << std::endl;
+      }
+      last_verify_response_ = serialized;
       return status == "SUCCESS";
     } catch (const json::parse_error &err) {
       std::ostringstream oss;
@@ -1280,6 +1273,10 @@ public:
 
   HttpResponse get_capture(const std::string &capture_id) {
     return authorized_get("/v2/payments/captures/" + capture_id);
+  }
+
+  const std::string &last_verify_response() const {
+    return last_verify_response_;
   }
 
 private:
@@ -1319,6 +1316,7 @@ private:
   std::string client_id_;
   std::string client_secret_;
   std::string base_url_;
+  std::string last_verify_response_;
 
   HttpResponse authorized_get(const std::string &path) {
     const auto token = fetch_access_token();
@@ -1479,7 +1477,13 @@ int main() {
                     return;
                   }
 
-                  if (!require_admin_session(req, res)) {
+                  if (is_admin_authenticated(req)) {
+                    res.status = 200;
+                    json payload = {
+                        {"status", "ok"},
+                        {"message", "Already signed in"},
+                    };
+                    res.set_content(payload.dump(), "application/json");
                     append_cors_headers(req, res, allowed_origins);
                     return;
                   }
@@ -1883,6 +1887,14 @@ int main() {
                     return;
                   }
 
+                  if (!is_admin_authenticated(req)) {
+                    res.status = 401;
+                    json err = {{"error", "Authentication required"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
                   if (!is_json_content_type(req.get_header_value("Content-Type"))) {
                     res.status = 415;
                     json err = {{"error", "Content-Type must be application/json"}};
@@ -2047,8 +2059,16 @@ int main() {
                       const auto resource_type = event.value("resource_type", std::string("<unknown>"));
 
                       bool verified = false;
+                      std::string webhook_id = req.get_header_value("PAYPAL-WEBHOOK-ID");
+                      if (webhook_id.empty()) {
+                        webhook_id = paypal_webhook_id;
+                      } else if (webhook_id != paypal_webhook_id) {
+                        std::cerr << "[paypal][webhook] Header webhook id " << webhook_id
+                                  << " differs from configured id " << paypal_webhook_id << std::endl;
+                      }
+
                       try {
-                        verified = paypal_client.verify_webhook_signature(paypal_webhook_id,
+                        verified = paypal_client.verify_webhook_signature(webhook_id,
                                                                           transmission_id,
                                                                           transmission_time,
                                                                           cert_url,
@@ -2066,8 +2086,12 @@ int main() {
                       if (!verified) {
                         res.status = 400;
                         res.set_content("Webhook signature invalid", "text/plain; charset=UTF-8");
+                        const auto verify_payload = paypal_client.last_verify_response();
+                        if (!verify_payload.empty()) {
+                          std::cerr << "[paypal][webhook] Verification response: " << verify_payload << std::endl;
+                        }
                         std::cerr << "[paypal][webhook] INVALID signature for event " << event_id
-                                  << " type=" << event_type << std::endl;
+                                  << " type=" << event_type << " webhook_id=" << webhook_id << std::endl;
                         return;
                       }
 
