@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Nuheat Hanger – PayPal Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background-color: #0f172a;
+      color: #e2e8f0;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    main {
+      width: min(960px, 100%);
+      padding: 32px 24px 48px;
+      box-sizing: border-box;
+    }
+
+    h1 {
+      font-size: 1.875rem;
+      margin-bottom: 0.5rem;
+    }
+
+    p.description {
+      margin-top: 0;
+      margin-bottom: 1.5rem;
+      color: #cbd5f5;
+      max-width: 60ch;
+    }
+
+    section {
+      margin-top: 1.5rem;
+    }
+
+    section[hidden] {
+      display: none !important;
+    }
+
+    form {
+      display: grid;
+      gap: 12px;
+      background-color: rgba(15, 23, 42, 0.72);
+      border: 1px solid rgba(148, 163, 184, 0.3);
+      border-radius: 12px;
+      padding: 20px;
+      backdrop-filter: blur(12px);
+    }
+
+    label {
+      display: flex;
+      flex-direction: column;
+      font-weight: 600;
+      font-size: 0.9rem;
+      gap: 6px;
+    }
+
+    input,
+    select,
+    button {
+      font: inherit;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background-color: rgba(15, 23, 42, 0.45);
+      color: inherit;
+      transition: border-color 0.2s ease, background-color 0.2s ease;
+    }
+
+    input:focus,
+    select:focus {
+      outline: none;
+      border-color: #38bdf8;
+      background-color: rgba(15, 23, 42, 0.75);
+    }
+
+    button {
+      cursor: pointer;
+      font-weight: 600;
+      background: linear-gradient(135deg, #38bdf8, #22d3ee);
+      color: #0f172a;
+      border: none;
+      margin-top: 8px;
+    }
+
+    button.secondary {
+      background: rgba(148, 163, 184, 0.25);
+      color: inherit;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: default;
+    }
+
+    .status,
+    .login-status {
+      margin-top: 16px;
+      min-height: 20px;
+      font-size: 0.95rem;
+    }
+
+    pre {
+      margin-top: 20px;
+      padding: 20px;
+      background-color: rgba(15, 23, 42, 0.55);
+      border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .response-meta {
+      margin-top: 24px;
+      display: grid;
+      gap: 6px;
+      font-size: 0.95rem;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    @media (max-width: 640px) {
+      form {
+        border-radius: 0;
+        padding: 16px;
+      }
+
+      .toolbar {
+        justify-content: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>PayPal Orders Dashboard</h1>
+    <p class="description">
+      Look up PayPal order and capture payloads on demand. Results come directly from PayPal’s API
+      so nothing is stored on this server.
+    </p>
+
+    <section id="login-section">
+      <form id="login-form" autocomplete="off" novalidate>
+        <label for="pin">
+          Admin PIN
+          <input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="current-password"
+                 placeholder="Enter the shared admin PIN" required>
+        </label>
+        <button type="submit">Unlock Dashboard</button>
+      </form>
+      <div class="login-status" id="login-status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section id="dashboard-section" hidden>
+      <div class="toolbar">
+        <button type="button" class="secondary" id="logout-button">Sign out</button>
+      </div>
+
+      <form id="lookup-form" autocomplete="off" novalidate>
+        <label for="resource-type">
+          Resource Type
+          <select id="resource-type" name="resource-type">
+            <option value="capture">Capture</option>
+            <option value="order">Order</option>
+          </select>
+        </label>
+
+        <label for="resource-id">
+          PayPal ID
+          <input id="resource-id" name="resource-id" placeholder="Enter capture or order id" required>
+        </label>
+
+        <button type="submit">Fetch Details</button>
+      </form>
+
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+
+      <div class="response-meta" id="response-meta" hidden>
+        <div><strong>Resource:</strong> <span id="meta-name"></span></div>
+        <div><strong>Payload keys:</strong> <span id="meta-keys"></span></div>
+      </div>
+
+      <pre id="result" hidden></pre>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      const loginSection = document.getElementById('login-section');
+      const dashboardSection = document.getElementById('dashboard-section');
+      const loginForm = document.getElementById('login-form');
+      const loginStatus = document.getElementById('login-status');
+      const logoutButton = document.getElementById('logout-button');
+      const lookupForm = document.getElementById('lookup-form');
+      const statusEl = document.getElementById('status');
+      const resultEl = document.getElementById('result');
+      const responseMeta = document.getElementById('response-meta');
+      const metaName = document.getElementById('meta-name');
+      const metaKeys = document.getElementById('meta-keys');
+
+      function setLoginStatus(message, isError = false) {
+        loginStatus.textContent = message || '';
+        loginStatus.style.color = isError ? '#f87171' : '#cbd5f5';
+      }
+
+      function setStatus(message, isError = false) {
+        statusEl.textContent = message || '';
+        statusEl.style.color = isError ? '#f87171' : '#cbd5f5';
+      }
+
+      function showPayload(payload, resourceId, resourceType) {
+        if (!payload) {
+          resultEl.hidden = true;
+          responseMeta.hidden = true;
+          return;
+        }
+
+        metaName.textContent = `${resourceType} • ${resourceId}`;
+        metaKeys.textContent = Object.keys(payload).join(', ') || '(no keys)';
+        responseMeta.hidden = false;
+
+        resultEl.textContent = JSON.stringify(payload, null, 2);
+        resultEl.hidden = false;
+      }
+
+      function showLogin(message = '') {
+        loginSection.hidden = false;
+        dashboardSection.hidden = true;
+        showPayload(null);
+        setStatus('');
+        if (message) {
+          setLoginStatus(message, true);
+        } else {
+          setLoginStatus('');
+        }
+        const pinInput = loginForm.elements['pin'];
+        if (pinInput) {
+          pinInput.focus();
+          pinInput.select();
+        }
+      }
+
+      function showDashboard() {
+        loginSection.hidden = true;
+        dashboardSection.hidden = false;
+        setLoginStatus('');
+        if (lookupForm) {
+          const idField = lookupForm.elements['resource-id'];
+          if (idField && typeof idField.focus === 'function') {
+            idField.focus();
+            idField.select();
+          }
+        }
+        if (resultEl.hidden) {
+          setStatus('Enter a PayPal order or capture id to get started.');
+        }
+      }
+
+      async function refreshSession() {
+        try {
+          const response = await fetch('/api/admin/session', {
+            method: 'GET',
+            credentials: 'include',
+          });
+          if (!response.ok) {
+            throw new Error('Session check failed');
+          }
+        const payload = await response.json();
+        if (payload && payload.authenticated) {
+          showDashboard();
+        } else {
+          showLogin();
+        }
+      } catch (err) {
+        console.error('Session check failed', err);
+        showLogin('Unable to confirm admin session. Try again in a moment.');
+      }
+      }
+
+      async function handleLogin(event) {
+        event.preventDefault();
+
+        const pinInput = loginForm.elements['pin'];
+        const pin = pinInput ? pinInput.value : '';
+        if (!pin) {
+          setLoginStatus('Enter the admin PIN.', true);
+          return;
+        }
+
+        setLoginStatus('Verifying PIN…');
+        const submitButton = loginForm.querySelector('button[type="submit"]');
+        if (submitButton) {
+          submitButton.disabled = true;
+        }
+
+        try {
+          const response = await fetch('/api/admin/login', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({ pin }),
+          });
+
+          let payload = null;
+          try {
+            payload = await response.json();
+          } catch (err) {
+            payload = null;
+          }
+
+          if (!response.ok) {
+            if (response.status === 401) {
+              setLoginStatus('PIN incorrect. Try again.', true);
+            } else if (response.status === 429) {
+              const waitSeconds = payload && payload.retryAfterSeconds ? payload.retryAfterSeconds : 'a few';
+              setLoginStatus(`Too many attempts. Wait ${waitSeconds} seconds and try again.`, true);
+            } else if (response.status === 403) {
+              setLoginStatus('Origin not allowed for this dashboard.', true);
+            } else {
+              setLoginStatus('Unable to unlock the dashboard. Try again shortly.', true);
+            }
+            return;
+          }
+
+          loginForm.reset();
+          setLoginStatus('Dashboard unlocked.');
+          await refreshSession();
+        } catch (err) {
+          console.error('Login failed', err);
+          setLoginStatus('Unexpected error talking to the dashboard API.', true);
+        } finally {
+          if (submitButton) {
+            submitButton.disabled = false;
+          }
+        }
+      }
+
+      async function handleLogout(event) {
+        event.preventDefault();
+        logoutButton.disabled = true;
+        try {
+          await fetch('/api/admin/logout', {
+            method: 'POST',
+            credentials: 'include',
+          });
+        } catch (err) {
+          console.error('Logout failed', err);
+        } finally {
+          logoutButton.disabled = false;
+          showLogin('Signed out.');
+        }
+      }
+
+      async function lookup(event) {
+        event.preventDefault();
+
+        const resourceType = lookupForm.elements['resource-type'].value || 'capture';
+        const resourceId = (lookupForm.elements['resource-id'].value || '').trim();
+
+        if (!resourceId) {
+          setStatus('Enter a PayPal order or capture id.', true);
+          showPayload(null);
+          return;
+        }
+
+        setStatus('Fetching from PayPal…');
+        showPayload(null);
+        const submitButton = lookupForm.querySelector('button[type="submit"]');
+        if (submitButton) {
+          submitButton.disabled = true;
+        }
+
+        try {
+          const response = await fetch('/api/admin/paypal/lookup', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+              type: resourceType,
+              id: resourceId,
+            }),
+          });
+
+          let payload = null;
+          try {
+            payload = await response.json();
+          } catch (err) {
+            payload = null;
+          }
+
+          if (response.status === 401) {
+            showLogin('Session expired. Enter the admin PIN to continue.');
+            return;
+          }
+
+          if (response.status === 403) {
+            showLogin('Origin not allowed for this dashboard.');
+            return;
+          }
+
+          if (!response.ok) {
+            const reason = payload && payload.error ? payload.error : response.statusText;
+            setStatus(`PayPal lookup failed: ${reason}`, true);
+            return;
+          }
+
+          showPayload(payload.payload, payload.resourceId, payload.resourceType);
+          setStatus('Lookup successful.');
+        } catch (err) {
+          console.error('Lookup failed', err);
+          setStatus('Unexpected error talking to the dashboard API.', true);
+        } finally {
+          if (submitButton) {
+            submitButton.disabled = false;
+          }
+        }
+      }
+
+      loginForm.addEventListener('submit', handleLogin, { passive: false });
+      logoutButton.addEventListener('click', handleLogout, { passive: false });
+      lookupForm.addEventListener('submit', lookup, { passive: false });
+
+      refreshSession();
+    })();
+  </script>
+</body>
+</html>

@@ -18,6 +18,9 @@
 #include <array>
 #include <iomanip>
 #include <vector>
+#include <chrono>
+#include <random>
+#include <mutex>
 
 using json = nlohmann::json;
 
@@ -64,6 +67,58 @@ HttpResponse http_post(const std::string &url,
   curl_easy_setopt(curl, CURLOPT_POST, 1L);
   curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
   curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, payload.size());
+  curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+  curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_to_string);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
+  curl_easy_setopt(curl, CURLOPT_USERAGENT, "nuheat-checkout-server/1.0");
+
+  if (timeout_seconds) {
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, *timeout_seconds);
+  }
+
+  if (user_pwd) {
+    curl_easy_setopt(curl, CURLOPT_USERPWD, user_pwd->c_str());
+  }
+
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+  curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+
+  response.code = curl_easy_perform(curl);
+
+  if (response.code != CURLE_OK) {
+    response.error_message = curl_easy_strerror(response.code);
+  } else {
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response.status);
+  }
+
+  if (header_list) {
+    curl_slist_free_all(header_list);
+  }
+
+  curl_easy_cleanup(curl);
+  return response;
+}
+
+HttpResponse http_get(const std::string &url,
+                      const std::vector<std::string> &headers,
+                      const std::optional<std::string> &user_pwd = std::nullopt,
+                      const std::optional<long> timeout_seconds = 10) {
+  CURL *curl = curl_easy_init();
+  HttpResponse response;
+
+  if (!curl) {
+    response.code = CURLE_FAILED_INIT;
+    response.error_message = "Failed to init curl";
+    return response;
+  }
+
+  struct curl_slist *header_list = nullptr;
+  for (const auto &header : headers) {
+    header_list = curl_slist_append(header_list, header.c_str());
+  }
+
+  curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+  curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_to_string);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
@@ -293,6 +348,15 @@ bool is_valid_order_id(const std::string &order_id) {
   return std::regex_match(order_id, kPayPalOrderIdPattern);
 }
 
+bool is_valid_paypal_resource_id(const std::string &value) {
+  if (value.empty() || value.size() > 64) {
+    return false;
+  }
+  return std::all_of(value.begin(), value.end(), [](unsigned char ch) {
+    return std::isalnum(ch) || ch == '-';
+  });
+}
+
 bool is_json_content_type(const std::string &content_type_raw) {
   if (content_type_raw.empty()) {
     return false;
@@ -302,6 +366,236 @@ bool is_json_content_type(const std::string &content_type_raw) {
   mime = trim_copy(mime);
   mime = to_lower_copy(mime);
   return mime == "application/json";
+}
+
+std::unordered_map<std::string, std::string> parse_cookies(const std::string &header) {
+  std::unordered_map<std::string, std::string> cookies;
+  if (header.empty()) {
+    return cookies;
+  }
+
+  std::stringstream ss(header);
+  std::string pair;
+  while (std::getline(ss, pair, ';')) {
+    const auto eq = pair.find('=');
+    if (eq == std::string::npos) {
+      continue;
+    }
+    auto name = trim_copy(pair.substr(0, eq));
+    auto value = trim_copy(pair.substr(eq + 1));
+    if (!name.empty()) {
+      cookies[name] = value;
+    }
+  }
+  return cookies;
+}
+
+std::optional<std::string> get_cookie_value(const httplib::Request &req, const std::string &name) {
+  const auto header = req.get_header_value("Cookie");
+  if (header.empty()) {
+    return std::nullopt;
+  }
+  const auto cookies = parse_cookies(header);
+  const auto it = cookies.find(name);
+  if (it == cookies.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
+constexpr std::chrono::minutes kAdminSessionTtl{240};
+constexpr std::chrono::minutes kAdminSessionSlidingRefresh = kAdminSessionTtl;
+constexpr std::chrono::minutes kAdminLoginWindow{10};
+constexpr std::chrono::minutes kAdminLockoutDuration{15};
+constexpr int kAdminMaxLoginAttempts = 5;
+const char kAdminSessionCookieName[] = "AdminSession";
+
+struct AdminSession {
+  std::chrono::system_clock::time_point expires_at{};
+  std::string remote_ip;
+};
+
+struct LoginAttemptInfo {
+  int attempts{0};
+  std::chrono::steady_clock::time_point window_start{std::chrono::steady_clock::time_point::min()};
+  std::chrono::steady_clock::time_point blocked_until{std::chrono::steady_clock::time_point::min()};
+};
+
+std::mutex admin_auth_mutex;
+std::unordered_map<std::string, AdminSession> admin_sessions;
+std::unordered_map<std::string, LoginAttemptInfo> admin_login_attempts;
+
+std::string generate_session_token() {
+  std::array<unsigned char, 32> bytes{};
+  std::random_device rd;
+  for (auto &byte : bytes) {
+    byte = static_cast<unsigned char>(rd() & 0xFF);
+  }
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string token;
+  token.reserve(bytes.size() * 2);
+  for (auto byte : bytes) {
+    token.push_back(kHex[byte >> 4]);
+    token.push_back(kHex[byte & 0x0F]);
+  }
+  return token;
+}
+
+void prune_expired_sessions_locked(std::chrono::system_clock::time_point now) {
+  for (auto it = admin_sessions.begin(); it != admin_sessions.end();) {
+    if (it->second.expires_at <= now) {
+      it = admin_sessions.erase(it);
+    } else {
+      ++it;
+    }
+  }
+}
+
+std::optional<std::string> extract_admin_session_token(const httplib::Request &req) {
+  return get_cookie_value(req, kAdminSessionCookieName);
+}
+
+bool is_admin_authenticated(const httplib::Request &req) {
+  const auto token_opt = extract_admin_session_token(req);
+  if (!token_opt) {
+    return false;
+  }
+
+  const auto token = *token_opt;
+  const auto now = std::chrono::system_clock::now();
+
+  std::lock_guard<std::mutex> lock(admin_auth_mutex);
+  prune_expired_sessions_locked(now);
+  const auto it = admin_sessions.find(token);
+  if (it == admin_sessions.end()) {
+    return false;
+  }
+
+  if (it->second.expires_at <= now) {
+    admin_sessions.erase(it);
+    return false;
+  }
+
+  it->second.expires_at = now + kAdminSessionSlidingRefresh;
+  return true;
+}
+
+void invalidate_admin_session(const std::string &token) {
+  if (token.empty()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(admin_auth_mutex);
+  admin_sessions.erase(token);
+}
+
+std::string issue_admin_session(const std::string &remote_ip) {
+  const auto now = std::chrono::system_clock::now();
+  std::lock_guard<std::mutex> lock(admin_auth_mutex);
+  prune_expired_sessions_locked(now);
+
+  std::string token;
+  do {
+    token = generate_session_token();
+  } while (admin_sessions.count(token) > 0);
+
+  admin_sessions[token] = AdminSession{
+      now + kAdminSessionTtl,
+      remote_ip,
+  };
+
+  return token;
+}
+
+struct LoginDecision {
+  bool allowed{true};
+  bool blocked{false};
+  std::chrono::steady_clock::duration retry_after{};
+};
+
+LoginDecision evaluate_login_attempt(const std::string &remote_ip, bool success) {
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(admin_auth_mutex);
+
+  auto &entry = admin_login_attempts[remote_ip];
+
+  if (entry.window_start == std::chrono::steady_clock::time_point::min() ||
+      now - entry.window_start > kAdminLoginWindow) {
+    entry.window_start = now;
+    entry.attempts = 0;
+  }
+
+  if (entry.blocked_until != std::chrono::steady_clock::time_point::min() &&
+      now < entry.blocked_until) {
+    return LoginDecision{
+        .allowed = false,
+        .blocked = true,
+        .retry_after = entry.blocked_until - now,
+    };
+  }
+
+  if (success) {
+    entry.attempts = 0;
+    entry.blocked_until = std::chrono::steady_clock::time_point::min();
+    return LoginDecision{.allowed = true};
+  }
+
+  entry.attempts += 1;
+  if (entry.attempts >= kAdminMaxLoginAttempts) {
+    entry.attempts = 0;
+    entry.blocked_until = now + kAdminLockoutDuration;
+    return LoginDecision{
+        .allowed = false,
+        .blocked = true,
+        .retry_after = kAdminLockoutDuration,
+    };
+  }
+
+  return LoginDecision{.allowed = false, .blocked = false};
+}
+
+std::string format_duration_seconds(std::chrono::steady_clock::duration duration) {
+  using namespace std::chrono;
+  const auto seconds_total = duration_cast<seconds>(duration).count();
+  if (seconds_total <= 0) {
+    return "0";
+  }
+  return std::to_string(seconds_total);
+}
+
+LoginDecision check_login_block(const std::string &remote_ip) {
+  const auto now = std::chrono::steady_clock::now();
+  std::lock_guard<std::mutex> lock(admin_auth_mutex);
+
+  auto &entry = admin_login_attempts[remote_ip];
+  if (entry.window_start == std::chrono::steady_clock::time_point::min() ||
+      now - entry.window_start > kAdminLoginWindow) {
+    entry.window_start = now;
+    entry.attempts = 0;
+  }
+
+  if (entry.blocked_until != std::chrono::steady_clock::time_point::min() &&
+      now < entry.blocked_until) {
+    return LoginDecision{
+        .allowed = false,
+        .blocked = true,
+        .retry_after = entry.blocked_until - now,
+    };
+  }
+
+  return LoginDecision{.allowed = true};
+}
+
+bool require_admin_session(const httplib::Request &req, httplib::Response &res) {
+  if (is_admin_authenticated(req)) {
+    return true;
+  }
+
+  res.status = 401;
+  json err = {
+      {"error", "Authentication required"},
+  };
+  res.set_content(err.dump(), "application/json");
+  return false;
 }
 
 struct ProductOption {
@@ -931,6 +1225,63 @@ public:
     return json::parse(response.body);
   }
 
+  bool verify_webhook_signature(const std::string &webhook_id,
+                                const std::string &transmission_id,
+                                const std::string &transmission_time,
+                                const std::string &cert_url,
+                                const std::string &auth_algo,
+                                const std::string &transmission_sig,
+                                const json &event_body) {
+    const auto token = fetch_access_token();
+    if (!token) {
+      throw std::runtime_error("Unable to retrieve PayPal access token");
+    }
+
+    json request_body = {
+        {"transmission_id", transmission_id},
+        {"transmission_time", transmission_time},
+        {"cert_url", cert_url},
+        {"auth_algo", auth_algo},
+        {"transmission_sig", transmission_sig},
+        {"webhook_id", webhook_id},
+        {"webhook_event", event_body},
+    };
+
+    const auto url = base_url_ + "/v1/notifications/verify-webhook-signature";
+    HttpResponse response = http_post(url,
+                                      request_body.dump(),
+                                      {
+                                          "Content-Type: application/json",
+                                          "Accept: application/json",
+                                          "Authorization: Bearer " + *token,
+                                      });
+
+    if (!response.ok()) {
+      std::ostringstream oss;
+      oss << "Failed to verify PayPal webhook signature. HTTP status " << response.status
+          << ". Error: " << response.error_message << ". Body: " << response.body;
+      throw std::runtime_error(oss.str());
+    }
+
+    try {
+      auto payload = json::parse(response.body);
+      const auto status = payload.value("verification_status", std::string());
+      return status == "SUCCESS";
+    } catch (const json::parse_error &err) {
+      std::ostringstream oss;
+      oss << "Failed to parse PayPal webhook verification response: " << err.what();
+      throw std::runtime_error(oss.str());
+    }
+  }
+
+  HttpResponse get_order(const std::string &order_id) {
+    return authorized_get("/v2/checkout/orders/" + order_id);
+  }
+
+  HttpResponse get_capture(const std::string &capture_id) {
+    return authorized_get("/v2/payments/captures/" + capture_id);
+  }
+
 private:
   std::optional<std::string> fetch_access_token() {
     const auto url = base_url_ + "/v1/oauth2/token";
@@ -968,6 +1319,22 @@ private:
   std::string client_id_;
   std::string client_secret_;
   std::string base_url_;
+
+  HttpResponse authorized_get(const std::string &path) {
+    const auto token = fetch_access_token();
+    if (!token) {
+      throw std::runtime_error("Unable to retrieve PayPal access token");
+    }
+
+    const auto url = base_url_ + path;
+    HttpResponse response = http_get(url,
+                                     {
+                                         "Accept: application/json",
+                                         "Authorization: Bearer " + *token,
+                                     });
+
+    return response;
+  }
 };
 
 void append_cors_headers(const httplib::Request &req,
@@ -981,7 +1348,7 @@ void append_cors_headers(const httplib::Request &req,
     res.set_header("Access-Control-Allow-Origin", allowed_origin->c_str());
   }
 
-  res.set_header("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.set_header("Access-Control-Allow-Headers", "Content-Type");
   res.set_header("Access-Control-Allow-Credentials", "true");
 }
@@ -1003,6 +1370,8 @@ int main() {
     const auto paypal_client_id = get_env_or_throw("PAYPAL_CLIENT_ID");
     const auto paypal_client_secret = get_env_or_throw("PAYPAL_CLIENT_SECRET");
     const auto paypal_environment = get_env_or_default("PAYPAL_ENV", "sandbox");
+    const auto paypal_webhook_id = get_env_or_throw("PAYPAL_WEBHOOK_ID");
+    const auto admin_access_pin = get_env_or_throw("ADMIN_ACCESS_PIN");
 
     PayPalClient paypal_client(paypal_client_id, paypal_client_secret, paypal_environment);
 
@@ -1012,6 +1381,8 @@ int main() {
     replace_all(index_template, "{{INLINE_PAYPAL_HELPER}}", kInlinePayPalHelper);
     replace_all(index_template, "{{PAYPAL_CLIENT_ID}}", paypal_client_id);
     const std::string index_html = index_template;
+    const auto admin_template_path = get_env_or_default("ADMIN_TEMPLATE_PATH", "templates/admin.html");
+    const std::string admin_html = load_file_or_throw(admin_template_path);
 
     httplib::Server server;
 
@@ -1024,6 +1395,11 @@ int main() {
     };
     server.Get("/", send_index);
     server.Get("/index.html", send_index);
+    const auto send_admin = [&](const httplib::Request &, httplib::Response &res) {
+      res.set_content(admin_html, "text/html; charset=UTF-8");
+    };
+    server.Get("/admin", send_admin);
+    server.Get("/admin/index.html", send_admin);
 
     server.Options("/api/create-order", [&](const httplib::Request &req, httplib::Response &res) {
       if (!is_request_origin_allowed(req, allowed_origins)) {
@@ -1046,6 +1422,219 @@ int main() {
       }
       append_cors_headers(req, res, allowed_origins);
     });
+
+    server.Options("/api/admin/paypal/lookup", [&](const httplib::Request &req, httplib::Response &res) {
+      if (!is_request_origin_allowed(req, allowed_origins)) {
+        res.status = 403;
+        json err = {{"error", "Origin not allowed"}};
+        res.set_content(err.dump(), "application/json");
+      } else {
+        res.status = 204;
+      }
+      append_cors_headers(req, res, allowed_origins);
+    });
+
+    server.Options("/api/admin/login", [&](const httplib::Request &req, httplib::Response &res) {
+      if (!is_request_origin_allowed(req, allowed_origins)) {
+        res.status = 403;
+        json err = {{"error", "Origin not allowed"}};
+        res.set_content(err.dump(), "application/json");
+      } else {
+        res.status = 204;
+      }
+      append_cors_headers(req, res, allowed_origins);
+    });
+
+    server.Options("/api/admin/logout", [&](const httplib::Request &req, httplib::Response &res) {
+      if (!is_request_origin_allowed(req, allowed_origins)) {
+        res.status = 403;
+        json err = {{"error", "Origin not allowed"}};
+        res.set_content(err.dump(), "application/json");
+      } else {
+        res.status = 204;
+      }
+      append_cors_headers(req, res, allowed_origins);
+    });
+
+    server.Options("/api/admin/session", [&](const httplib::Request &req, httplib::Response &res) {
+      if (!is_request_origin_allowed(req, allowed_origins)) {
+        res.status = 403;
+        json err = {{"error", "Origin not allowed"}};
+        res.set_content(err.dump(), "application/json");
+      } else {
+        res.status = 204;
+      }
+      append_cors_headers(req, res, allowed_origins);
+    });
+
+    server.Post("/api/admin/login",
+                [&](const httplib::Request &req, httplib::Response &res) {
+                  res.set_header("Cache-Control", "no-store");
+
+                  if (!is_request_origin_allowed(req, allowed_origins)) {
+                    res.status = 403;
+                    json err = {{"error", "Origin not allowed"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (!require_admin_session(req, res)) {
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (!is_json_content_type(req.get_header_value("Content-Type"))) {
+                    res.status = 415;
+                    json err = {{"error", "Content-Type must be application/json"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (req.body.empty()) {
+                    res.status = 400;
+                    json err = {{"error", "Missing request body"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  try {
+                    const json body = json::parse(req.body);
+                    if (!body.contains("pin") || !body.at("pin").is_string()) {
+                      res.status = 400;
+                      json err = {{"error", "pin is required and must be a string"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    const std::string provided_pin = trim_copy(body.at("pin").get<std::string>());
+                    const std::string remote_ip = req.remote_addr.empty() ? "<unknown>" : req.remote_addr;
+
+                    const auto block_status = check_login_block(remote_ip);
+                    if (!block_status.allowed && block_status.blocked) {
+                      const auto retry_seconds = format_duration_seconds(block_status.retry_after);
+                      res.status = 429;
+                      res.set_header("Retry-After", retry_seconds);
+                      json err = {
+                          {"error", "Too many attempts. Try again later."},
+                          {"retryAfterSeconds", retry_seconds},
+                      };
+                      res.set_content(err.dump(), "application/json");
+                      std::cerr << "[admin][login] Rate limit active for " << remote_ip << std::endl;
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    const bool pin_valid = provided_pin == admin_access_pin;
+                    if (!pin_valid) {
+                      const auto decision = evaluate_login_attempt(remote_ip, false);
+                      if (decision.blocked) {
+                        const auto retry_seconds = format_duration_seconds(decision.retry_after);
+                        res.status = 429;
+                        res.set_header("Retry-After", retry_seconds);
+                        json err = {
+                            {"error", "Too many attempts. Try again later."},
+                            {"retryAfterSeconds", retry_seconds},
+                        };
+                        res.set_content(err.dump(), "application/json");
+                        std::cerr << "[admin][login] Locking out " << remote_ip << " after repeated failures"
+                                  << std::endl;
+                      } else {
+                        res.status = 401;
+                        json err = {{"error", "Invalid PIN"}};
+                        res.set_content(err.dump(), "application/json");
+                      }
+                      std::cerr << "[admin][login] Invalid PIN attempt from " << remote_ip << std::endl;
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    evaluate_login_attempt(remote_ip, true);
+
+                    const auto session_token = issue_admin_session(remote_ip);
+                    const auto session_max_age =
+                        std::chrono::duration_cast<std::chrono::seconds>(kAdminSessionTtl).count();
+
+                    std::ostringstream cookie;
+                    cookie << kAdminSessionCookieName << '=' << session_token
+                           << "; Path=/; HttpOnly; SameSite=Lax; Max-Age=" << session_max_age;
+                    res.set_header("Set-Cookie", cookie.str());
+
+                    res.status = 200;
+                    json payload = {
+                        {"status", "ok"},
+                    };
+                    res.set_content(payload.dump(), "application/json");
+                    std::cout << "[admin][login] PIN accepted from " << remote_ip << std::endl;
+                  } catch (const json::parse_error &err) {
+                    res.status = 400;
+                    json payload = {
+                        {"error", "Invalid JSON payload"},
+                        {"details", err.what()},
+                    };
+                    res.set_content(payload.dump(), "application/json");
+                  }
+
+                  append_cors_headers(req, res, allowed_origins);
+                });
+
+    server.Post("/api/admin/logout",
+                [&](const httplib::Request &req, httplib::Response &res) {
+                  res.set_header("Cache-Control", "no-store");
+
+                  if (!is_request_origin_allowed(req, allowed_origins)) {
+                    res.status = 403;
+                    json err = {{"error", "Origin not allowed"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (const auto token = extract_admin_session_token(req)) {
+                    invalidate_admin_session(*token);
+                  }
+
+                  res.set_header("Set-Cookie",
+                                 std::string(kAdminSessionCookieName) +
+                                     "=deleted; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+                  res.status = 200;
+                  json payload = {
+                      {"status", "signed_out"},
+                  };
+                  res.set_content(payload.dump(), "application/json");
+                  append_cors_headers(req, res, allowed_origins);
+                });
+
+    server.Get("/api/admin/session",
+               [&](const httplib::Request &req, httplib::Response &res) {
+                 res.set_header("Cache-Control", "no-store");
+
+                 if (!is_request_origin_allowed(req, allowed_origins)) {
+                   res.status = 403;
+                   json err = {{"error", "Origin not allowed"}};
+                   res.set_content(err.dump(), "application/json");
+                   append_cors_headers(req, res, allowed_origins);
+                   return;
+                 }
+
+                 const bool authenticated = is_admin_authenticated(req);
+                 res.status = 200;
+                 json payload = {
+                     {"authenticated", authenticated},
+                 };
+                 res.set_content(payload.dump(), "application/json");
+
+                 if (!authenticated) {
+                   res.set_header("Set-Cookie",
+                                  std::string(kAdminSessionCookieName) +
+                                      "=deleted; Path=/; HttpOnly; SameSite=Lax; Max-Age=0");
+                 }
+
+                 append_cors_headers(req, res, allowed_origins);
+               });
 
     server.Post("/api/create-order",
                 [&](const httplib::Request &req, httplib::Response &res) {
@@ -1282,9 +1871,242 @@ int main() {
                   append_cors_headers(req, res, allowed_origins);
                 });
 
+    server.Post("/api/admin/paypal/lookup",
+                [&](const httplib::Request &req, httplib::Response &res) {
+                  res.set_header("Cache-Control", "no-store");
+
+                  if (!is_request_origin_allowed(req, allowed_origins)) {
+                    res.status = 403;
+                    json err = {{"error", "Origin not allowed"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (!is_json_content_type(req.get_header_value("Content-Type"))) {
+                    res.status = 415;
+                    json err = {{"error", "Content-Type must be application/json"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  if (req.body.empty()) {
+                    res.status = 400;
+                    json err = {{"error", "Missing request body"}};
+                    res.set_content(err.dump(), "application/json");
+                    append_cors_headers(req, res, allowed_origins);
+                    return;
+                  }
+
+                  try {
+                    const json body = json::parse(req.body);
+                    if (!body.contains("id") || !body.at("id").is_string()) {
+                      res.status = 400;
+                      json err = {{"error", "id is required and must be a string"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    std::string lookup_type = "capture";
+                    if (body.contains("type")) {
+                      if (!body.at("type").is_string()) {
+                        res.status = 400;
+                        json err = {{"error", "type must be a string"}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                      lookup_type = to_lower_copy(trim_copy(body.at("type").get<std::string>()));
+                    }
+
+                    const std::string resource_id = trim_copy(body.at("id").get<std::string>());
+                    if (!is_valid_paypal_resource_id(resource_id)) {
+                      res.status = 422;
+                      json err = {{"error", "id format is invalid"}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    HttpResponse remote;
+                    if (lookup_type == "order") {
+                      remote = paypal_client.get_order(resource_id);
+                    } else if (lookup_type == "capture") {
+                      remote = paypal_client.get_capture(resource_id);
+                    } else {
+                      res.status = 400;
+                      json err = {{"error", "type must be \"order\" or \"capture\""}};
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    if (remote.status == 404) {
+                      res.status = 404;
+                      json err = {
+                          {"error", "Resource not found in PayPal"},
+                          {"resourceId", resource_id},
+                          {"resourceType", lookup_type},
+                      };
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    if (!remote.ok()) {
+                      res.status = 502;
+                      json err = {
+                          {"error", "Failed to retrieve resource from PayPal"},
+                          {"status", remote.status},
+                          {"message", remote.error_message},
+                      };
+                      if (!remote.body.empty()) {
+                        err["body"] = remote.body;
+                      }
+                      res.set_content(err.dump(), "application/json");
+                      append_cors_headers(req, res, allowed_origins);
+                      return;
+                    }
+
+                    try {
+                      const json payload = json::parse(remote.body);
+                      json result = {
+                          {"status", "ok"},
+                          {"resourceType", lookup_type},
+                          {"resourceId", resource_id},
+                          {"payload", payload},
+                      };
+                      res.status = 200;
+                      res.set_content(result.dump(), "application/json");
+                      std::cout << "[paypal][admin] Lookup success type=" << lookup_type
+                                << " id=" << resource_id << std::endl;
+                    } catch (const json::parse_error &err) {
+                      res.status = 502;
+                      json err_payload = {
+                          {"error", "Unable to parse PayPal response"},
+                          {"details", err.what()},
+                      };
+                      res.set_content(err_payload.dump(), "application/json");
+                    }
+                  } catch (const json::parse_error &err) {
+                    res.status = 400;
+                    json err_payload = {
+                        {"error", "Invalid JSON payload"},
+                        {"details", err.what()},
+                    };
+                    res.set_content(err_payload.dump(), "application/json");
+                  } catch (const std::exception &ex) {
+                    res.status = 500;
+                    json err = {
+                        {"error", "Lookup failed"},
+                        {"details", ex.what()},
+                    };
+                    res.set_content(err.dump(), "application/json");
+                    std::cerr << "[paypal][admin] Lookup failed: " << ex.what() << std::endl;
+                  }
+
+                  append_cors_headers(req, res, allowed_origins);
+                });
+
     server.Post("/api/paypal/ipn",
                 [&](const httplib::Request &req, httplib::Response &res) {
                   res.set_header("Cache-Control", "no-store");
+
+                  const auto content_type = req.get_header_value("Content-Type");
+                  const bool request_is_json = is_json_content_type(content_type);
+
+                  if (request_is_json) {
+                    if (req.body.empty()) {
+                      res.status = 400;
+                      res.set_content("Missing webhook payload", "text/plain; charset=UTF-8");
+                      std::cerr << "[paypal][webhook] Received empty payload" << std::endl;
+                      return;
+                    }
+
+                    try {
+                      const auto transmission_id = req.get_header_value("PAYPAL-TRANSMISSION-ID");
+                      const auto transmission_time = req.get_header_value("PAYPAL-TRANSMISSION-TIME");
+                      const auto cert_url = req.get_header_value("PAYPAL-CERT-URL");
+                      const auto auth_algo = req.get_header_value("PAYPAL-AUTH-ALGO");
+                      const auto transmission_sig = req.get_header_value("PAYPAL-TRANSMISSION-SIG");
+
+                      if (transmission_id.empty() || transmission_time.empty() || cert_url.empty() ||
+                          auth_algo.empty() || transmission_sig.empty()) {
+                        res.status = 400;
+                        res.set_content("Missing PayPal verification headers", "text/plain; charset=UTF-8");
+                        std::cerr << "[paypal][webhook] Missing verification headers. transmission_id="
+                                  << (transmission_id.empty() ? "<empty>" : transmission_id) << std::endl;
+                        return;
+                      }
+
+                      const json event = json::parse(req.body);
+                      const auto event_id = event.value("id", std::string("<unknown>"));
+                      const auto event_type = event.value("event_type", std::string("<unknown>"));
+                      const auto resource_type = event.value("resource_type", std::string("<unknown>"));
+
+                      bool verified = false;
+                      try {
+                        verified = paypal_client.verify_webhook_signature(paypal_webhook_id,
+                                                                          transmission_id,
+                                                                          transmission_time,
+                                                                          cert_url,
+                                                                          auth_algo,
+                                                                          transmission_sig,
+                                                                          event);
+                      } catch (const std::exception &verify_err) {
+                        res.status = 500;
+                        res.set_content("Webhook verification failure", "text/plain; charset=UTF-8");
+                        std::cerr << "[paypal][webhook] Verification failed for event " << event_id
+                                  << ": " << verify_err.what() << std::endl;
+                        return;
+                      }
+
+                      if (!verified) {
+                        res.status = 400;
+                        res.set_content("Webhook signature invalid", "text/plain; charset=UTF-8");
+                        std::cerr << "[paypal][webhook] INVALID signature for event " << event_id
+                                  << " type=" << event_type << std::endl;
+                        return;
+                      }
+
+                      std::string resource_id;
+                      if (event.contains("resource") && event.at("resource").is_object()) {
+                        const auto &resource = event.at("resource");
+                        if (resource.contains("id") && resource.at("id").is_string()) {
+                          resource_id = resource.at("id").get<std::string>();
+                        } else if (resource.contains("supplementary_data") &&
+                                   resource.at("supplementary_data").is_object()) {
+                          const auto &supplementary = resource.at("supplementary_data");
+                          if (supplementary.contains("related_ids") &&
+                              supplementary.at("related_ids").is_object()) {
+                            const auto &related = supplementary.at("related_ids");
+                            if (related.contains("order_id") && related.at("order_id").is_string()) {
+                              resource_id = related.at("order_id").get<std::string>();
+                            }
+                          }
+                        }
+                      }
+
+                      std::cout << "[paypal][webhook] VERIFIED event_id=" << event_id
+                                << " type=" << event_type << " resource_type=" << resource_type
+                                << " resource_id=" << (resource_id.empty() ? "<none>" : resource_id) << std::endl;
+
+                      res.status = 200;
+                      json response_body = {
+                          {"status", "accepted"},
+                          {"eventId", event_id},
+                          {"eventType", event_type},
+                      };
+                      res.set_content(response_body.dump(), "application/json");
+                    } catch (const json::parse_error &err) {
+                      res.status = 400;
+                      res.set_content("Invalid JSON payload", "text/plain; charset=UTF-8");
+                      std::cerr << "[paypal][webhook] Failed to parse payload: " << err.what() << std::endl;
+                    }
+                    return;
+                  }
 
                   if (req.body.empty()) {
                     res.status = 400;
