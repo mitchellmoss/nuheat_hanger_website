@@ -160,6 +160,75 @@ std::string trim_copy(const std::string &value) {
   return value.substr(first, last - first + 1);
 }
 
+std::string url_decode(const std::string &value) {
+  std::string result;
+  result.reserve(value.size());
+
+  auto from_hex = [](char ch) -> int {
+    if (ch >= '0' && ch <= '9') {
+      return ch - '0';
+    }
+    if (ch >= 'A' && ch <= 'F') {
+      return ch - 'A' + 10;
+    }
+    if (ch >= 'a' && ch <= 'f') {
+      return ch - 'a' + 10;
+    }
+    return -1;
+  };
+
+  for (size_t i = 0; i < value.size(); ++i) {
+    const char ch = value[i];
+    if (ch == '+') {
+      result.push_back(' ');
+    } else if (ch == '%' && i + 2 < value.size()) {
+      const int high = from_hex(value[i + 1]);
+      const int low = from_hex(value[i + 2]);
+      if (high >= 0 && low >= 0) {
+        result.push_back(static_cast<char>((high << 4) | low));
+        i += 2;
+      } else {
+        result.push_back(ch);
+      }
+    } else {
+      result.push_back(ch);
+    }
+  }
+
+  return result;
+}
+
+std::unordered_map<std::string, std::string> parse_urlencoded_body(const std::string &body) {
+  std::unordered_map<std::string, std::string> result;
+  size_t start = 0;
+  while (start <= body.size()) {
+    const auto end = body.find('&', start);
+    const std::string pair = (end == std::string::npos) ? body.substr(start)
+                                                        : body.substr(start, end - start);
+    if (!pair.empty()) {
+      const auto eq_pos = pair.find('=');
+      const std::string key = url_decode(pair.substr(0, eq_pos));
+      const std::string value = (eq_pos == std::string::npos) ? std::string()
+                                                              : url_decode(pair.substr(eq_pos + 1));
+      if (!key.empty()) {
+        result[key] = value;
+      }
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return result;
+}
+
+std::string paypal_ipn_verify_url(const std::string &environment) {
+  if (environment == "live" || environment == "production") {
+    return "https://ipnpb.paypal.com/cgi-bin/webscr";
+  }
+  return "https://ipnpb.sandbox.paypal.com/cgi-bin/webscr";
+}
+
 std::string to_lower_copy(std::string value) {
   std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
     return static_cast<char>(std::tolower(ch));
@@ -1211,6 +1280,83 @@ int main() {
                     std::cerr << "[error] " << ex.what() << std::endl;
                   }
                   append_cors_headers(req, res, allowed_origins);
+                });
+
+    server.Post("/api/paypal/ipn",
+                [&](const httplib::Request &req, httplib::Response &res) {
+                  res.set_header("Cache-Control", "no-store");
+
+                  if (req.body.empty()) {
+                    res.status = 400;
+                    res.set_content("Missing IPN payload", "text/plain; charset=UTF-8");
+                    std::cerr << "[paypal][ipn] Received empty payload" << std::endl;
+                    return;
+                  }
+
+                  const std::string verify_url = paypal_ipn_verify_url(paypal_environment);
+                  std::string verify_payload = "cmd=_notify-validate";
+                  verify_payload.reserve(verify_payload.size() + 1 + req.body.size());
+                  if (!req.body.empty()) {
+                    verify_payload.push_back('&');
+                    verify_payload.append(req.body);
+                  }
+
+                  HttpResponse verify_response =
+                      http_post(verify_url,
+                                verify_payload,
+                                {
+                                    "Content-Type: application/x-www-form-urlencoded",
+                                    "Connection: close",
+                                });
+
+                  if (!verify_response.ok()) {
+                    res.status = 500;
+                    res.set_content("Verification transport failure", "text/plain; charset=UTF-8");
+                    std::cerr << "[paypal][ipn] Verification request failed. HTTP status "
+                              << verify_response.status << ". Error: " << verify_response.error_message
+                              << ". Body: " << verify_response.body << std::endl;
+                    return;
+                  }
+
+                  const std::string verification_status = trim_copy(verify_response.body);
+                  const bool verified = verification_status == "VERIFIED";
+                  const bool invalid = verification_status == "INVALID";
+
+                  const auto params = parse_urlencoded_body(req.body);
+                  const auto get_param = [&](const std::string &key) -> std::string {
+                    const auto it = params.find(key);
+                    return it != params.end() ? it->second : std::string();
+                  };
+
+                  const std::string txn_id = get_param("txn_id");
+                  const std::string payment_status = get_param("payment_status");
+                  const std::string payer_email = get_param("payer_email");
+                  const std::string mc_gross = get_param("mc_gross");
+                  const std::string invoice = get_param("invoice");
+
+                  if (verified) {
+                    std::cout << "[paypal][ipn] VERIFIED txn_id=" << (txn_id.empty() ? "<none>" : txn_id)
+                              << " status=" << (payment_status.empty() ? "<unknown>" : payment_status)
+                              << " gross=" << (mc_gross.empty() ? "<n/a>" : mc_gross)
+                              << " invoice=" << (invoice.empty() ? "<none>" : invoice)
+                              << " payer=" << (payer_email.empty() ? "<hidden>" : payer_email) << std::endl;
+                  } else if (invalid) {
+                    std::cerr << "[paypal][ipn] INVALID payload txn_id=" << (txn_id.empty() ? "<none>" : txn_id)
+                              << " status=" << (payment_status.empty() ? "<unknown>" : payment_status)
+                              << std::endl;
+                  } else {
+                    std::cerr << "[paypal][ipn] Unexpected verification response: " << verification_status
+                              << ". txn_id=" << (txn_id.empty() ? "<none>" : txn_id) << std::endl;
+                  }
+
+                  res.status = 200;
+                  if (verified) {
+                    res.set_content("VERIFIED", "text/plain; charset=UTF-8");
+                  } else if (invalid) {
+                    res.set_content("INVALID", "text/plain; charset=UTF-8");
+                  } else {
+                    res.set_content("UNKNOWN", "text/plain; charset=UTF-8");
+                  }
                 });
 
     server.set_error_handler([&](const httplib::Request &req, httplib::Response &res) {
