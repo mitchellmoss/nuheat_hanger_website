@@ -305,14 +305,6 @@ img {
 
 .purchase__option {
   display: block;
-  position: relative;
-  cursor: pointer;
-}
-
-.purchase__option input {
-  position: absolute;
-  opacity: 0;
-  inset: 0;
 }
 
 .purchase__option-panel {
@@ -323,14 +315,15 @@ img {
   gap: 0.4rem;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   background: #fff;
+  cursor: pointer;
 }
 
-.purchase__option input:checked + .purchase__option-panel {
+.purchase__option-panel.is-selected {
   border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(234, 88, 12, 0.18);
 }
 
-.purchase__option input:focus-visible + .purchase__option-panel {
+.purchase__option-panel:focus-visible {
   outline: 2px solid var(--color-primary);
   outline-offset: 4px;
 }
@@ -349,6 +342,39 @@ img {
   font-size: 0.95rem;
   font-weight: 600;
   color: var(--color-primary-dark);
+}
+
+.purchase__option-quantity {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.purchase__option-quantity-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-secondary);
+}
+
+.purchase__quantity-input {
+  max-width: 5.5rem;
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fff;
+  cursor: text;
+}
+
+.purchase__quantity-input:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.purchase__option-quantity-help {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--color-secondary);
 }
 
 .purchase__note {

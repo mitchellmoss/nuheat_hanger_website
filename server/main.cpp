@@ -298,9 +298,12 @@ const char kInlinePayPalHelper[] = R"(<script>
   var fallbackTimer;
   var buttonsRendered = false;
   var retryTimer = null;
-  var productInputSelector = 'input[data-product-id]';
+  var productOptionSelector = '.purchase__option';
+  var productPanelSelector = '.purchase__option-panel';
+  var productInputSelector = '.purchase__quantity-input';
   var productImageEl = document.getElementById('purchase-product-image');
   var lastSelectedProductId = null;
+  var matchesSelector = Element.prototype.matches || Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
   var productImageMap = {
     'ac0200-holder': {
       src: 'https://nuheat.clipsandwedges.com/static/images/holder-front.jpg',
@@ -318,6 +321,60 @@ const char kInlinePayPalHelper[] = R"(<script>
       return 0;
     }
     return quantity;
+  }
+
+  function findInputByProductId(productId) {
+    return document.querySelector(productInputSelector + '[data-product-id="' + productId + '"]');
+  }
+
+  function refreshOptionStates() {
+    var options = document.querySelectorAll(productOptionSelector);
+    if (!options || !options.length) {
+      return;
+    }
+    for (var i = 0; i < options.length; i++) {
+      var option = options[i];
+      var panel = option.querySelector(productPanelSelector);
+      if (!panel) {
+        continue;
+      }
+      var input = option.querySelector(productInputSelector);
+      var quantity = input ? parseQuantity(input.value) : 0;
+      if (quantity > 0) {
+        panel.classList.add('is-selected');
+        panel.setAttribute('aria-pressed', 'true');
+      } else {
+        panel.classList.remove('is-selected');
+        panel.setAttribute('aria-pressed', 'false');
+      }
+    }
+  }
+
+  function sanitizeAllQuantities() {
+    var inputs = document.querySelectorAll(productInputSelector);
+    if (!inputs || !inputs.length) {
+      return;
+    }
+    var firstPositive = null;
+    for (var i = 0; i < inputs.length; i++) {
+      var input = inputs[i];
+      var productId = input.getAttribute('data-product-id');
+      if (!productId) {
+        continue;
+      }
+      var quantity = parseQuantity(input.value);
+      input.value = String(quantity);
+      if (quantity > 0 && !firstPositive) {
+        firstPositive = productId;
+      }
+      if (quantity === 0 && lastSelectedProductId === productId) {
+        lastSelectedProductId = null;
+      }
+    }
+    if (!lastSelectedProductId && firstPositive) {
+      lastSelectedProductId = firstPositive;
+    }
+    refreshOptionStates();
   }
 
   function getProductSelections() {
@@ -345,7 +402,7 @@ const char kInlinePayPalHelper[] = R"(<script>
 
   function getPrimaryProductId() {
     if (lastSelectedProductId) {
-      var lastInput = document.querySelector(productInputSelector + '[data-product-id="' + lastSelectedProductId + '"]');
+      var lastInput = findInputByProductId(lastSelectedProductId);
       if (lastInput && parseQuantity(lastInput.value) > 0) {
         return lastSelectedProductId;
       }
@@ -359,6 +416,34 @@ const char kInlinePayPalHelper[] = R"(<script>
     return fallbackInput ? fallbackInput.getAttribute('data-product-id') : null;
   }
 
+  function handleQuantityEvent(event, sanitize) {
+    var target = event && (event.target || event.srcElement);
+    if (!target) {
+      return;
+    }
+    if (sanitize) {
+      target.value = String(parseQuantity(target.value));
+    }
+    var productId = target.getAttribute('data-product-id');
+    if (!productId) {
+      return;
+    }
+    var quantity = parseQuantity(target.value);
+    if (quantity > 0) {
+      lastSelectedProductId = productId;
+    } else if (lastSelectedProductId === productId) {
+      lastSelectedProductId = null;
+    }
+    refreshOptionStates();
+    updateProductImage();
+    if (statusEl && statusEl.textContent) {
+      var selections = getProductSelections();
+      if (selections.length > 0) {
+        statusEl.textContent = '';
+      }
+    }
+  }
+
   function showFallbackMessage() {
     if (statusEl && !statusEl.textContent && !buttonsRendered) {
       statusEl.textContent = 'Unable to load PayPal checkout. Refresh or email orders@nuheat-hanger.com to place your order.';
@@ -366,6 +451,8 @@ const char kInlinePayPalHelper[] = R"(<script>
   }
 
   function createOrderOnServer() {
+    sanitizeAllQuantities();
+    updateProductImage();
     var payload = {};
     var selections = getProductSelections();
     if (!selections.length) {
@@ -373,6 +460,10 @@ const char kInlinePayPalHelper[] = R"(<script>
       error.code = 'NO_SELECTION';
       if (statusEl) {
         statusEl.textContent = error.message;
+      }
+      var firstInput = document.querySelector(productInputSelector);
+      if (firstInput && typeof firstInput.focus === 'function') {
+        firstInput.focus();
       }
       return Promise.reject(error);
     }
@@ -552,44 +643,69 @@ const char kInlinePayPalHelper[] = R"(<script>
     if (productInputs && productInputs.length) {
       for (var i = 0; i < productInputs.length; i++) {
         var input = productInputs[i];
-        input.addEventListener('change', function (event) {
-          var target = event.target || event.srcElement;
-          if (!target) {
-            return;
-          }
-          var productId = target.getAttribute('data-product-id');
-          if (!productId) {
-            return;
-          }
-          if (parseQuantity(target.value) > 0) {
-            lastSelectedProductId = productId;
-          } else if (lastSelectedProductId === productId) {
-            lastSelectedProductId = null;
-          }
-          updateProductImage();
-        });
         input.addEventListener('input', function (event) {
-          var target = event.target || event.srcElement;
-          if (!target) {
-            return;
-          }
-          var productId = target.getAttribute('data-product-id');
-          if (!productId) {
-            return;
-          }
-          if (parseQuantity(target.value) > 0) {
-            lastSelectedProductId = productId;
-          } else if (lastSelectedProductId === productId) {
-            lastSelectedProductId = null;
-          }
-          updateProductImage();
+          handleQuantityEvent(event, false);
+        });
+        input.addEventListener('change', function (event) {
+          handleQuantityEvent(event, true);
         });
       }
     }
+
+    var productOptions = document.querySelectorAll(productOptionSelector);
+    if (productOptions && productOptions.length) {
+      for (var j = 0; j < productOptions.length; j++) {
+        (function () {
+          var option = productOptions[j];
+          var panel = option.querySelector(productPanelSelector);
+          var input = option.querySelector(productInputSelector);
+          if (!panel || !input) {
+            return;
+          }
+          if (!panel.hasAttribute('tabindex')) {
+            panel.setAttribute('tabindex', '0');
+          }
+          panel.setAttribute('role', 'button');
+          panel.addEventListener('click', function (event) {
+            if (event.target && matchesSelector && matchesSelector.call(event.target, productInputSelector)) {
+              return;
+            }
+            if (parseQuantity(input.value) === 0) {
+              input.value = '1';
+            }
+            handleQuantityEvent({ target: input }, true);
+            if (typeof input.focus === 'function') {
+              input.focus();
+              if (typeof input.select === 'function') {
+                input.select();
+              }
+            }
+          });
+          panel.addEventListener('keydown', function (event) {
+            if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+              event.preventDefault();
+              if (parseQuantity(input.value) === 0) {
+                input.value = '1';
+              }
+              handleQuantityEvent({ target: input }, true);
+              if (typeof input.focus === 'function') {
+                input.focus();
+                if (typeof input.select === 'function') {
+                  input.select();
+                }
+              }
+            }
+          });
+        })();
+      }
+    }
+
+    sanitizeAllQuantities();
     var initialSelections = getProductSelections();
     if (initialSelections.length) {
       lastSelectedProductId = initialSelections[0].productId;
     }
+    refreshOptionStates();
     updateProductImage();
     mountPayPalButtons();
   }
@@ -876,19 +992,25 @@ int main() {
                     std::vector<SelectedProduct> selections;
                     std::vector<std::string> requested_order;
                     std::unordered_map<std::string, int> quantity_by_product;
+                    bool legacy_payload_invalid = false;
+                    std::string legacy_payload_error;
 
                     auto apply_legacy_payload = [&](const json &body) {
-                      if (body.contains("productId")) {
-                        if (!body.at("productId").is_string()) {
-                          throw std::invalid_argument("productId must be a string");
-                        }
-                        const auto legacy_id = body.at("productId").get<std::string>();
-                        if (!legacy_id.empty()) {
-                          quantity_by_product[legacy_id] += 1;
-                          if (std::find(requested_order.begin(), requested_order.end(), legacy_id) == requested_order.end()) {
-                            requested_order.push_back(legacy_id);
-                          }
-                        }
+                      if (!body.contains("productId")) {
+                        return;
+                      }
+                      if (!body.at("productId").is_string()) {
+                        legacy_payload_invalid = true;
+                        legacy_payload_error = "productId must be a string";
+                        return;
+                      }
+                      const auto legacy_id = body.at("productId").get<std::string>();
+                      if (legacy_id.empty()) {
+                        return;
+                      }
+                      quantity_by_product[legacy_id] += 1;
+                      if (std::find(requested_order.begin(), requested_order.end(), legacy_id) == requested_order.end()) {
+                        requested_order.push_back(legacy_id);
                       }
                     };
 
@@ -952,6 +1074,13 @@ int main() {
                         }
                       } else {
                         apply_legacy_payload(body);
+                        if (legacy_payload_invalid) {
+                          res.status = 400;
+                          json err = {{"error", legacy_payload_error}};
+                          res.set_content(err.dump(), "application/json");
+                          append_cors_headers(req, res, allowed_origins);
+                          return;
+                        }
                       }
                     }
 

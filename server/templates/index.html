@@ -250,40 +250,46 @@
             <fieldset class="purchase__fieldset">
               <legend id="purchase-legend" class="purchase__legend">Choose your sensor holder</legend>
               <div class="purchase__options">
-                <div class="purchase__option">
-                  <div class="purchase__option-panel">
+                <div class="purchase__option" data-product-id="ac0200-holder">
+                  <div class="purchase__option-panel" role="button" tabindex="0" aria-pressed="false">
                     <span class="purchase__option-title">NH AC0200 Fault Sensor Holder</span>
                     <span class="purchase__option-description">Keeps the NH AC0200 indicator protected and at eye level.</span>
                     <span class="purchase__option-price">$16.89 + $6.88 US shipping</span>
-                    <label class="purchase__option-quantity" for="product-qty-ac0200">
-                      <span class="purchase__option-quantity-label">Quantity</span>
-                      <input id="product-qty-ac0200"
+                    <div class="purchase__option-quantity">
+                      <label class="purchase__option-quantity-label" for="product-qty-ac0200">Quantity</label>
+                      <input class="purchase__quantity-input"
+                             id="product-qty-ac0200"
                              name="product-qty-ac0200"
                              type="number"
                              min="0"
                              step="1"
                              value="1"
                              inputmode="numeric"
-                             data-product-id="ac0200-holder">
-                    </label>
+                             data-product-id="ac0200-holder"
+                             aria-describedby="product-qty-ac0200-help">
+                      <p id="product-qty-ac0200-help" class="purchase__option-quantity-help">Enter how many you need.</p>
+                    </div>
                   </div>
                 </div>
-                <div class="purchase__option">
-                  <div class="purchase__option-panel">
+                <div class="purchase__option" data-product-id="ac0100-holder">
+                  <div class="purchase__option-panel" role="button" tabindex="0" aria-pressed="false">
                     <span class="purchase__option-title">MatSense Pro (AC0100) Holder</span>
                     <span class="purchase__option-description">Scaled for the Nuheat MatSense Pro (AC0100) test kit.</span>
                     <span class="purchase__option-price">$16.89 + $6.88 US shipping</span>
-                    <label class="purchase__option-quantity" for="product-qty-ac0100">
-                      <span class="purchase__option-quantity-label">Quantity</span>
-                      <input id="product-qty-ac0100"
+                    <div class="purchase__option-quantity">
+                      <label class="purchase__option-quantity-label" for="product-qty-ac0100">Quantity</label>
+                      <input class="purchase__quantity-input"
+                             id="product-qty-ac0100"
                              name="product-qty-ac0100"
                              type="number"
                              min="0"
                              step="1"
                              value="0"
                              inputmode="numeric"
-                             data-product-id="ac0100-holder">
-                    </label>
+                             data-product-id="ac0100-holder"
+                             aria-describedby="product-qty-ac0100-help">
+                      <p id="product-qty-ac0100-help" class="purchase__option-quantity-help">Set to zero to skip this holder.</p>
+                    </div>
                   </div>
                 </div>
               </div>
