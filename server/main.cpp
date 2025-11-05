@@ -295,6 +295,17 @@ const char kInlinePayPalHelper[] = R"(<script>
   var buttonsRendered = false;
   var retryTimer = null;
   var productSelector = 'input[name="product-option"]';
+  var productImageEl = document.getElementById('purchase-product-image');
+  var productImageMap = {
+    'ac0200-holder': {
+      src: 'https://nuheat.clipsandwedges.com/static/images/holder-front.jpg',
+      alt: 'Close up of the NH AC0200 holder detailing the zip-tie channel'
+    },
+    'ac0100-holder': {
+      src: '/static/images/holder_small_front.jpg',
+      alt: 'MatSense Pro (AC0100) sensor shown seated in the smaller holder'
+    }
+  };
 
   function getSelectedProductId() {
     var selected = document.querySelector(productSelector + ':checked');
@@ -363,6 +374,22 @@ const char kInlinePayPalHelper[] = R"(<script>
       }
       return res.json();
     });
+  }
+
+  function updateProductImage() {
+    if (!productImageEl) {
+      return;
+    }
+    var selectedProduct = getSelectedProductId();
+    if (!selectedProduct) {
+      return;
+    }
+    var config = productImageMap[selectedProduct];
+    if (!config) {
+      return;
+    }
+    productImageEl.setAttribute('src', config.src);
+    productImageEl.setAttribute('alt', config.alt);
   }
 
   function mountPayPalButtons() {
@@ -465,6 +492,13 @@ const char kInlinePayPalHelper[] = R"(<script>
       statusEl.textContent = 'Loading secure PayPal checkout…';
     }
     fallbackTimer = window.setTimeout(showFallbackMessage, 6000);
+    var productOptions = document.querySelectorAll(productSelector);
+    if (productOptions && productOptions.length && typeof productOptions.forEach === 'function') {
+      productOptions.forEach(function (option) {
+        option.addEventListener('change', updateProductImage);
+      });
+    }
+    updateProductImage();
     mountPayPalButtons();
   }
 
