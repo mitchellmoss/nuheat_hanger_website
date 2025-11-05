@@ -250,22 +250,42 @@
             <fieldset class="purchase__fieldset">
               <legend id="purchase-legend" class="purchase__legend">Choose your sensor holder</legend>
               <div class="purchase__options">
-                <label class="purchase__option">
-                  <input type="radio" name="product-option" value="ac0200-holder" checked>
+                <div class="purchase__option">
                   <div class="purchase__option-panel">
                     <span class="purchase__option-title">NH AC0200 Fault Sensor Holder</span>
                     <span class="purchase__option-description">Keeps the NH AC0200 indicator protected and at eye level.</span>
                     <span class="purchase__option-price">$16.89 + $6.88 US shipping</span>
+                    <label class="purchase__option-quantity" for="product-qty-ac0200">
+                      <span class="purchase__option-quantity-label">Quantity</span>
+                      <input id="product-qty-ac0200"
+                             name="product-qty-ac0200"
+                             type="number"
+                             min="0"
+                             step="1"
+                             value="1"
+                             inputmode="numeric"
+                             data-product-id="ac0200-holder">
+                    </label>
                   </div>
-                </label>
-                <label class="purchase__option">
-                  <input type="radio" name="product-option" value="ac0100-holder">
+                </div>
+                <div class="purchase__option">
                   <div class="purchase__option-panel">
                     <span class="purchase__option-title">MatSense Pro (AC0100) Holder</span>
                     <span class="purchase__option-description">Scaled for the Nuheat MatSense Pro (AC0100) test kit.</span>
                     <span class="purchase__option-price">$16.89 + $6.88 US shipping</span>
+                    <label class="purchase__option-quantity" for="product-qty-ac0100">
+                      <span class="purchase__option-quantity-label">Quantity</span>
+                      <input id="product-qty-ac0100"
+                             name="product-qty-ac0100"
+                             type="number"
+                             min="0"
+                             step="1"
+                             value="0"
+                             inputmode="numeric"
+                             data-product-id="ac0100-holder">
+                    </label>
                   </div>
-                </label>
+                </div>
               </div>
             </fieldset>
           </form>

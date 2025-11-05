@@ -17,6 +17,7 @@
 #include <cctype>
 #include <array>
 #include <iomanip>
+#include <vector>
 
 using json = nlohmann::json;
 
@@ -237,14 +238,17 @@ bool is_json_content_type(const std::string &content_type_raw) {
 struct ProductOption {
   std::string id;
   std::string reference_id;
+  std::string name;
   std::string description;
-  int item_price_cents;
-  int shipping_cents;
-
-  int total_price_cents() const {
-    return item_price_cents + shipping_cents;
-  }
+  int unit_price_cents;
 };
+
+struct SelectedProduct {
+  const ProductOption *option;
+  int quantity;
+};
+
+constexpr int kFlatShippingCents = 688;
 
 std::string format_price_cents(int cents) {
   std::ostringstream oss;
@@ -256,14 +260,14 @@ const std::array<ProductOption, 2> &product_catalog() {
   static const std::array<ProductOption, 2> catalog{{
       {"ac0200-holder",
        "NH-AC0200-HOOK-1",
+       "NH AC0200 Fault Sensor Holder",
        "3D-Printed Hook Holder for NH AC0200 Fault Sensor",
-       1689,
-       688},
+       1689},
       {"ac0100-holder",
        "NH-AC0100-HOOK-1",
+       "MatSense Pro (AC0100) Holder",
        "3D-Printed Hook Holder for Nuheat MatSense Pro (AC0100)",
-       1689,
-       688},
+       1689},
   }};
   return catalog;
 }
@@ -294,9 +298,9 @@ const char kInlinePayPalHelper[] = R"(<script>
   var fallbackTimer;
   var buttonsRendered = false;
   var retryTimer = null;
-  var productSelector = 'input[name="product-option"]';
+  var productInputSelector = 'input[data-product-id]';
   var productImageEl = document.getElementById('purchase-product-image');
-  var matchesSelector = Element.prototype.matches || Element.prototype.msMatchesSelector || Element.prototype.webkitMatchesSelector;
+  var lastSelectedProductId = null;
   var productImageMap = {
     'ac0200-holder': {
       src: 'https://nuheat.clipsandwedges.com/static/images/holder-front.jpg',
@@ -308,9 +312,51 @@ const char kInlinePayPalHelper[] = R"(<script>
     }
   };
 
-  function getSelectedProductId() {
-    var selected = document.querySelector(productSelector + ':checked');
-    return selected ? selected.value : null;
+  function parseQuantity(value) {
+    var quantity = parseInt(value, 10);
+    if (isNaN(quantity) || quantity < 0) {
+      return 0;
+    }
+    return quantity;
+  }
+
+  function getProductSelections() {
+    var inputs = document.querySelectorAll(productInputSelector);
+    var selections = [];
+    if (!inputs || !inputs.length) {
+      return selections;
+    }
+    for (var i = 0; i < inputs.length; i++) {
+      var input = inputs[i];
+      var productId = input.getAttribute('data-product-id');
+      if (!productId) {
+        continue;
+      }
+      var quantity = parseQuantity(input.value);
+      if (quantity > 0) {
+        selections.push({
+          productId: productId,
+          quantity: quantity
+        });
+      }
+    }
+    return selections;
+  }
+
+  function getPrimaryProductId() {
+    if (lastSelectedProductId) {
+      var lastInput = document.querySelector(productInputSelector + '[data-product-id="' + lastSelectedProductId + '"]');
+      if (lastInput && parseQuantity(lastInput.value) > 0) {
+        return lastSelectedProductId;
+      }
+      lastSelectedProductId = null;
+    }
+    var selections = getProductSelections();
+    if (selections.length > 0) {
+      return selections[0].productId;
+    }
+    var fallbackInput = document.querySelector(productInputSelector);
+    return fallbackInput ? fallbackInput.getAttribute('data-product-id') : null;
   }
 
   function showFallbackMessage() {
@@ -321,10 +367,16 @@ const char kInlinePayPalHelper[] = R"(<script>
 
   function createOrderOnServer() {
     var payload = {};
-    var selectedProduct = getSelectedProductId();
-    if (selectedProduct) {
-      payload.productId = selectedProduct;
+    var selections = getProductSelections();
+    if (!selections.length) {
+      var error = new Error('Select at least one holder before checkout.');
+      error.code = 'NO_SELECTION';
+      if (statusEl) {
+        statusEl.textContent = error.message;
+      }
+      return Promise.reject(error);
     }
+    payload.items = selections;
 
     return fetch('/api/create-order', {
       method: 'POST',
@@ -381,7 +433,7 @@ const char kInlinePayPalHelper[] = R"(<script>
     if (!productImageEl) {
       return;
     }
-    var selectedProduct = getSelectedProductId();
+    var selectedProduct = getPrimaryProductId();
     if (!selectedProduct) {
       return;
     }
@@ -430,6 +482,9 @@ const char kInlinePayPalHelper[] = R"(<script>
       },
       createOrder: function () {
         return createOrderOnServer().catch(function (err) {
+          if (err && err.code === 'NO_SELECTION') {
+            return Promise.reject(err);
+          }
           console.error('Failed to create order', err);
           if (statusEl) {
             statusEl.textContent = 'Unable to start checkout right now. Try again in a moment or email orders@nuheat-hanger.com.';
@@ -493,22 +548,48 @@ const char kInlinePayPalHelper[] = R"(<script>
       statusEl.textContent = 'Loading secure PayPal checkout…';
     }
     fallbackTimer = window.setTimeout(showFallbackMessage, 6000);
-    document.addEventListener('change', function (event) {
-      if (!matchesSelector) {
-        return;
+    var productInputs = document.querySelectorAll(productInputSelector);
+    if (productInputs && productInputs.length) {
+      for (var i = 0; i < productInputs.length; i++) {
+        var input = productInputs[i];
+        input.addEventListener('change', function (event) {
+          var target = event.target || event.srcElement;
+          if (!target) {
+            return;
+          }
+          var productId = target.getAttribute('data-product-id');
+          if (!productId) {
+            return;
+          }
+          if (parseQuantity(target.value) > 0) {
+            lastSelectedProductId = productId;
+          } else if (lastSelectedProductId === productId) {
+            lastSelectedProductId = null;
+          }
+          updateProductImage();
+        });
+        input.addEventListener('input', function (event) {
+          var target = event.target || event.srcElement;
+          if (!target) {
+            return;
+          }
+          var productId = target.getAttribute('data-product-id');
+          if (!productId) {
+            return;
+          }
+          if (parseQuantity(target.value) > 0) {
+            lastSelectedProductId = productId;
+          } else if (lastSelectedProductId === productId) {
+            lastSelectedProductId = null;
+          }
+          updateProductImage();
+        });
       }
-      if (event.target && matchesSelector.call(event.target, productSelector)) {
-        updateProductImage();
-      }
-    });
-    document.addEventListener('input', function (event) {
-      if (!matchesSelector) {
-        return;
-      }
-      if (event.target && matchesSelector.call(event.target, productSelector)) {
-        updateProductImage();
-      }
-    });
+    }
+    var initialSelections = getProductSelections();
+    if (initialSelections.length) {
+      lastSelectedProductId = initialSelections[0].productId;
+    }
     updateProductImage();
     mountPayPalButtons();
   }
@@ -531,32 +612,86 @@ public:
         client_secret_(std::move(client_secret)),
         base_url_(paypal_base_url(environment)) {}
 
-  json create_order(const ProductOption &product) {
+  json create_order(const std::vector<SelectedProduct> &selections) {
+    if (selections.empty()) {
+      throw std::invalid_argument("At least one product must be provided when creating an order");
+    }
+
     const auto token = fetch_access_token();
     if (!token) {
       throw std::runtime_error("Unable to retrieve PayPal access token");
     }
 
-    const auto total_value = format_price_cents(product.total_price_cents());
-    const auto item_value = format_price_cents(product.item_price_cents);
-    const auto shipping_value = format_price_cents(product.shipping_cents);
+    json items = json::array();
+    int item_total_cents = 0;
+    std::vector<std::string> summary_entries;
+    summary_entries.reserve(selections.size());
+
+    for (const auto &selection : selections) {
+      if (!selection.option) {
+        continue;
+      }
+      if (selection.quantity <= 0) {
+        continue;
+      }
+      const auto &product = *selection.option;
+      item_total_cents += product.unit_price_cents * selection.quantity;
+      items.push_back({
+          {"name", product.name},
+          {"description", product.description},
+          {"sku", product.reference_id},
+          {"quantity", std::to_string(selection.quantity)},
+          {"category", "PHYSICAL_GOODS"},
+          {"unit_amount",
+           json{
+               {"currency_code", "USD"},
+               {"value", format_price_cents(product.unit_price_cents)},
+           }},
+      });
+
+      std::ostringstream line;
+      line << product.name << " x" << selection.quantity;
+      summary_entries.push_back(line.str());
+    }
+
+    if (items.empty() || item_total_cents <= 0) {
+      throw std::invalid_argument("Order must contain at least one item with quantity greater than zero");
+    }
+
+    const int shipping_cents = kFlatShippingCents;
+    const auto shipping_value = format_price_cents(shipping_cents);
+    const auto item_value = format_price_cents(item_total_cents);
+    const auto total_value = format_price_cents(item_total_cents + shipping_cents);
+
+    const std::string reference_id = selections.size() == 1 && selections.front().option
+                                         ? selections.front().option->reference_id
+                                         : "NUHEAT-MULTI";
+
+    std::ostringstream description_builder;
+    for (std::size_t i = 0; i < summary_entries.size(); ++i) {
+      if (i > 0) {
+        description_builder << "; ";
+      }
+      description_builder << summary_entries[i];
+    }
+    const auto description = description_builder.str();
 
     json request_body = {
         {"intent", "CAPTURE"},
         {"purchase_units",
          json::array({json{
-             {"reference_id", product.reference_id},
-             {"description", product.description},
+             {"reference_id", reference_id},
+             {"description", description},
+             {"custom_id", "Nuheat Sensor Holders"},
+             {"items", items},
              {"amount",
               json{
                   {"currency_code", "USD"},
                   {"value", total_value},
                   {"breakdown",
                    json{
-                       {"item_total",
-                        json{{"currency_code", "USD"}, {"value", item_value}}},
-                       {"shipping",
-                        json{{"currency_code", "USD"}, {"value", shipping_value}}},
+                       {"item_total", json{{"currency_code", "USD"}, {"value", item_value}}},
+                       {"shipping", json{{"currency_code", "USD"}, {"value", shipping_value}}},
                    }},
               }},
          }})},
@@ -738,7 +873,25 @@ int main() {
                   }
 
                   try {
-                    std::string product_id = default_product().id;
+                    std::vector<SelectedProduct> selections;
+                    std::vector<std::string> requested_order;
+                    std::unordered_map<std::string, int> quantity_by_product;
+
+                    auto apply_legacy_payload = [&](const json &body) {
+                      if (body.contains("productId")) {
+                        if (!body.at("productId").is_string()) {
+                          throw std::invalid_argument("productId must be a string");
+                        }
+                        const auto legacy_id = body.at("productId").get<std::string>();
+                        if (!legacy_id.empty()) {
+                          quantity_by_product[legacy_id] += 1;
+                          if (std::find(requested_order.begin(), requested_order.end(), legacy_id) == requested_order.end()) {
+                            requested_order.push_back(legacy_id);
+                          }
+                        }
+                      }
+                    };
+
                     if (!req.body.empty()) {
                       if (!is_json_content_type(req.get_header_value("Content-Type"))) {
                         res.status = 415;
@@ -749,32 +902,104 @@ int main() {
                       }
 
                       auto body = json::parse(req.body);
-                      if (body.contains("productId")) {
-                        if (!body.at("productId").is_string()) {
+                      if (body.contains("items")) {
+                        if (!body.at("items").is_array()) {
                           res.status = 400;
-                          json err = {{"error", "productId must be a string"}};
+                          json err = {{"error", "items must be an array"}};
                           res.set_content(err.dump(), "application/json");
                           append_cors_headers(req, res, allowed_origins);
                           return;
                         }
-                        product_id = body.at("productId").get<std::string>();
+                        for (const auto &entry : body.at("items")) {
+                          if (!entry.is_object()) {
+                            res.status = 400;
+                            json err = {{"error", "Each item must be an object"}};
+                            res.set_content(err.dump(), "application/json");
+                            append_cors_headers(req, res, allowed_origins);
+                            return;
+                          }
+                          if (!entry.contains("productId") || !entry.at("productId").is_string()) {
+                            res.status = 400;
+                            json err = {{"error", "Each item requires a string productId"}};
+                            res.set_content(err.dump(), "application/json");
+                            append_cors_headers(req, res, allowed_origins);
+                            return;
+                          }
+                          if (!entry.contains("quantity")) {
+                            res.status = 400;
+                            json err = {{"error", "Each item requires a quantity"}};
+                            res.set_content(err.dump(), "application/json");
+                            append_cors_headers(req, res, allowed_origins);
+                            return;
+                          }
+                          const std::string product_id = entry.at("productId").get<std::string>();
+                          const auto quantity_value = entry.at("quantity");
+                          if (!quantity_value.is_number_integer()) {
+                            res.status = 400;
+                            json err = {{"error", "quantity must be an integer"}};
+                            res.set_content(err.dump(), "application/json");
+                            append_cors_headers(req, res, allowed_origins);
+                            return;
+                          }
+                          const int quantity = quantity_value.get<int>();
+                          if (quantity <= 0) {
+                            continue;
+                          }
+                          quantity_by_product[product_id] += quantity;
+                          if (std::find(requested_order.begin(), requested_order.end(), product_id) == requested_order.end()) {
+                            requested_order.push_back(product_id);
+                          }
+                        }
+                      } else {
+                        apply_legacy_payload(body);
                       }
                     }
 
-                    const auto *product = find_product_by_id(product_id);
-                    if (!product) {
+                    if (quantity_by_product.empty()) {
+                      const auto &product = default_product();
+                      quantity_by_product[product.id] = 1;
+                      requested_order.push_back(product.id);
+                    }
+
+                    for (const auto &product_id : requested_order) {
+                      const auto quantity_it = quantity_by_product.find(product_id);
+                      if (quantity_it == quantity_by_product.end()) {
+                        continue;
+                      }
+                      const auto *product = find_product_by_id(product_id);
+                      if (!product) {
+                        res.status = 422;
+                        json err = {{"error", "Unknown productId"}, {"details", product_id}};
+                        res.set_content(err.dump(), "application/json");
+                        append_cors_headers(req, res, allowed_origins);
+                        return;
+                      }
+                      if (quantity_it->second <= 0) {
+                        continue;
+                      }
+                      selections.push_back(SelectedProduct{product, quantity_it->second});
+                    }
+
+                    if (selections.empty()) {
                       res.status = 422;
-                      json err = {{"error", "Unknown productId"}};
+                      json err = {{"error", "At least one product with quantity greater than zero is required"}};
                       res.set_content(err.dump(), "application/json");
                       append_cors_headers(req, res, allowed_origins);
                       return;
                     }
 
-                    auto order = paypal_client.create_order(*product);
+                    auto order = paypal_client.create_order(selections);
+                    json selected_items = json::array();
+                    for (const auto &selection : selections) {
+                      selected_items.push_back({
+                          {"productId", selection.option->id},
+                          {"quantity", selection.quantity},
+                      });
+                    }
                     json response = {
                         {"orderID", order.at("id")},
                         {"status", order.value("status", "UNKNOWN")},
-                        {"productId", product->id},
+                        {"items", selected_items},
                     };
                     res.status = 200;
                     res.set_content(response.dump(), "application/json");
