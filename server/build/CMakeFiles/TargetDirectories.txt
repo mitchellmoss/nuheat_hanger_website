@@ -1,0 +1,3 @@
+/Users/mitchellmoss/projects/nuheat_hanger_website/server/build/CMakeFiles/nuheat_checkout_server.dir
+/Users/mitchellmoss/projects/nuheat_hanger_website/server/build/CMakeFiles/edit_cache.dir
+/Users/mitchellmoss/projects/nuheat_hanger_website/server/build/CMakeFiles/rebuild_cache.dir
