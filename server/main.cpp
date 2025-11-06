@@ -321,6 +321,21 @@ std::vector<std::string> parse_allowed_origins(const std::string &value) {
   return origins;
 }
 
+std::string join_allowed_origins(const std::vector<std::string> &origins) {
+  if (origins.empty()) {
+    return "<empty>";
+  }
+
+  std::ostringstream oss;
+  for (std::size_t i = 0; i < origins.size(); ++i) {
+    if (i > 0) {
+      oss << ",";
+    }
+    oss << origins[i];
+  }
+  return oss.str();
+}
+
 std::string extract_host_from_authority(const std::string &authority) {
   auto trimmed = trim_copy(authority);
   if (trimmed.empty()) {
@@ -428,15 +443,21 @@ std::optional<std::string> resolve_allowed_origin(const httplib::Request &req,
 bool is_request_origin_allowed(const httplib::Request &req,
                                const std::vector<std::string> &allowed_origins) {
   if (allowed_origins.empty()) {
+    std::cerr << "[cors] Rejecting request because allowlist is empty" << std::endl;
     return false;
   }
 
   const auto origin = req.get_header_value("Origin");
   if (origin.empty()) {
+    const auto host_header = trim_copy(req.get_header_value("Host"));
+    std::cerr << "[cors] No Origin header present. host='" << host_header
+              << "' remote='" << (req.remote_addr.empty() ? "<unknown>" : req.remote_addr)
+              << "'" << std::endl;
     return true;
   }
 
   if (origin_matches(allowed_origins, origin)) {
+    std::cerr << "[cors] Origin '" << origin << "' allowed via explicit match" << std::endl;
     return true;
   }
 
@@ -455,22 +476,33 @@ bool is_request_origin_allowed(const httplib::Request &req,
         const std::string reconstructed_origin = scheme + "://" + host_header;
         const std::string normalized_reconstructed = normalize_origin(reconstructed_origin);
         if (normalized_reconstructed == normalized_origin) {
+          std::cerr << "[cors] Origin '" << origin
+                    << "' accepted via host header normalization. reconstructed='"
+                    << reconstructed_origin << "'" << std::endl;
           return true;
         }
         const std::string normalized_host_only = normalize_origin(scheme + "://" + origin_host);
         if (normalized_host_only == normalized_origin) {
+          std::cerr << "[cors] Origin '" << origin
+                    << "' accepted via host-only normalization." << std::endl;
           return true;
         }
       }
 
       const std::string normalized_host_only = normalize_origin(scheme + "://" + host_header);
       if (normalized_host_only == normalized_origin) {
+        std::cerr << "[cors] Origin '" << origin
+                  << "' accepted via normalized host header '" << host_header << "'" << std::endl;
         return true;
       }
     }
   }
 
-  std::cerr << "[cors] Denying origin '" << origin << "' for host '" << host_header << "'" << std::endl;
+  const std::string normalized_origin = normalize_origin(origin);
+  std::cerr << "[cors] Denying origin '" << origin << "' (normalized '" << normalized_origin
+            << "') host='" << host_header << "' remote='"
+            << (req.remote_addr.empty() ? "<unknown>" : req.remote_addr)
+            << "' allowlist='" << join_allowed_origins(allowed_origins) << "'" << std::endl;
   return false;
 }
 
@@ -2073,6 +2105,11 @@ int main() {
                     res.status = 403;
                     json err = {{"error", "Origin not allowed"}};
                     res.set_content(err.dump(), "application/json");
+                    std::cerr << "[admin][transactions] Origin rejected. origin='"
+                              << req.get_header_value("Origin") << "' host='"
+                              << req.get_header_value("Host") << "' remote='"
+                              << (req.remote_addr.empty() ? "<unknown>" : req.remote_addr)
+                              << "'" << std::endl;
                     append_cors_headers(req, res, allowed_origins);
                     return;
                   }
