@@ -1644,6 +1644,9 @@ int main() {
       append_cors_headers(req, res, allowed_origins);
     });
     server.Options("/api/admin/paypal/transactions", [&](const httplib::Request &req, httplib::Response &res) {
+      std::cerr << "[admin][transactions][options] origin='" << req.get_header_value("Origin")
+                << "' host='" << req.get_header_value("Host") << "' remote='"
+                << (req.remote_addr.empty() ? "<unknown>" : req.remote_addr) << "'" << std::endl;
       if (!is_request_origin_allowed(req, allowed_origins)) {
         res.status = 403;
         json err = {{"error", "Origin not allowed"}};
@@ -2105,16 +2108,12 @@ int main() {
                     res.status = 403;
                     json err = {{"error", "Origin not allowed"}};
                     res.set_content(err.dump(), "application/json");
-                    std::cerr << "[admin][transactions] Origin rejected. origin='"
-                              << req.get_header_value("Origin") << "' host='"
-                              << req.get_header_value("Host") << "' remote='"
-                              << (req.remote_addr.empty() ? "<unknown>" : req.remote_addr)
-                              << "'" << std::endl;
                     append_cors_headers(req, res, allowed_origins);
                     return;
                   }
 
                   if (!is_admin_authenticated(req)) {
+                    std::cerr << "[admin][lookup] Rejecting: no valid admin session" << std::endl;
                     res.status = 401;
                     json err = {{"error", "Authentication required"}};
                     res.set_content(err.dump(), "application/json");
@@ -2123,6 +2122,8 @@ int main() {
                   }
 
                   if (!is_json_content_type(req.get_header_value("Content-Type"))) {
+                    std::cerr << "[admin][lookup] Rejecting: unsupported content-type '"
+                              << req.get_header_value("Content-Type") << "'" << std::endl;
                     res.status = 415;
                     json err = {{"error", "Content-Type must be application/json"}};
                     res.set_content(err.dump(), "application/json");
@@ -2131,6 +2132,7 @@ int main() {
                   }
 
                   if (req.body.empty()) {
+                    std::cerr << "[admin][lookup] Rejecting: empty request body" << std::endl;
                     res.status = 400;
                     json err = {{"error", "Missing request body"}};
                     res.set_content(err.dump(), "application/json");
@@ -2222,6 +2224,8 @@ int main() {
                       std::cout << "[paypal][admin] Lookup success type=" << lookup_type
                                 << " id=" << resource_id << std::endl;
                     } catch (const json::parse_error &err) {
+                      std::cerr << "[admin][lookup] Failed to parse PayPal response: " << err.what()
+                                << std::endl;
                       res.status = 502;
                       json err_payload = {
                           {"error", "Unable to parse PayPal response"},
@@ -2252,6 +2256,10 @@ int main() {
     server.Post("/api/admin/paypal/transactions",
                 [&](const httplib::Request &req, httplib::Response &res) {
                   res.set_header("Cache-Control", "no-store");
+                  std::cerr << "[admin][transactions][post] origin='" << req.get_header_value("Origin")
+                            << "' host='" << req.get_header_value("Host") << "' remote='"
+                            << (req.remote_addr.empty() ? "<unknown>" : req.remote_addr)
+                            << "' content-type='" << req.get_header_value("Content-Type") << "'" << std::endl;
 
                   if (!is_request_origin_allowed(req, allowed_origins)) {
                     res.status = 403;
@@ -2262,6 +2270,7 @@ int main() {
                   }
 
                   if (!is_admin_authenticated(req)) {
+                    std::cerr << "[admin][transactions] Rejecting: no valid admin session" << std::endl;
                     res.status = 401;
                     json err = {{"error", "Authentication required"}};
                     res.set_content(err.dump(), "application/json");
@@ -2270,6 +2279,8 @@ int main() {
                   }
 
                   if (!is_json_content_type(req.get_header_value("Content-Type"))) {
+                    std::cerr << "[admin][transactions] Rejecting: unsupported content-type '"
+                              << req.get_header_value("Content-Type") << "'" << std::endl;
                     res.status = 415;
                     json err = {{"error", "Content-Type must be application/json"}};
                     res.set_content(err.dump(), "application/json");
@@ -2278,6 +2289,7 @@ int main() {
                   }
 
                   if (req.body.empty()) {
+                    std::cerr << "[admin][transactions] Rejecting: empty request body" << std::endl;
                     res.status = 400;
                     json err = {{"error", "Missing request body"}};
                     res.set_content(err.dump(), "application/json");
@@ -2289,6 +2301,7 @@ int main() {
                     const json body = json::parse(req.body);
 
                     if (!body.contains("startDate") || !body.at("startDate").is_string()) {
+                      std::cerr << "[admin][transactions] Validation failed: startDate missing or not string" << std::endl;
                       res.status = 400;
                       json err = {{"error", "startDate is required and must be a string"}};
                       res.set_content(err.dump(), "application/json");
@@ -2296,6 +2309,7 @@ int main() {
                       return;
                     }
                     if (!body.contains("endDate") || !body.at("endDate").is_string()) {
+                      std::cerr << "[admin][transactions] Validation failed: endDate missing or not string" << std::endl;
                       res.status = 400;
                       json err = {{"error", "endDate is required and must be a string"}};
                       res.set_content(err.dump(), "application/json");
@@ -2306,6 +2320,7 @@ int main() {
                     const std::string start_date = trim_copy(body.at("startDate").get<std::string>());
                     const std::string end_date = trim_copy(body.at("endDate").get<std::string>());
                     if (start_date.empty() || end_date.empty()) {
+                      std::cerr << "[admin][transactions] Validation failed: start or end date empty" << std::endl;
                       res.status = 422;
                       json err = {{"error", "startDate and endDate cannot be empty"}};
                       res.set_content(err.dump(), "application/json");
@@ -2314,6 +2329,7 @@ int main() {
                     }
 
                     if (!is_valid_rfc3339_datetime(start_date) || !is_valid_rfc3339_datetime(end_date)) {
+                      std::cerr << "[admin][transactions] Validation failed: invalid RFC3339 timestamps" << std::endl;
                       res.status = 422;
                       json err = {{"error", "startDate and endDate must be RFC3339 timestamps"}};
                       res.set_content(err.dump(), "application/json");
@@ -2322,6 +2338,7 @@ int main() {
                     }
 
                     if (start_date > end_date) {
+                      std::cerr << "[admin][transactions] Validation failed: startDate after endDate" << std::endl;
                       res.status = 422;
                       json err = {{"error", "startDate must be before endDate"}};
                       res.set_content(err.dump(), "application/json");
@@ -2333,6 +2350,7 @@ int main() {
                     if (body.contains("page")) {
                       const auto &page_node = body.at("page");
                       if (!page_node.is_number_integer()) {
+                        std::cerr << "[admin][transactions] Validation failed: page not integer" << std::endl;
                         res.status = 400;
                         json err = {{"error", "page must be an integer"}};
                         res.set_content(err.dump(), "application/json");
@@ -2341,6 +2359,7 @@ int main() {
                       }
                       page = page_node.get<int>();
                       if (page < 1) {
+                        std::cerr << "[admin][transactions] Validation failed: page < 1" << std::endl;
                         res.status = 422;
                         json err = {{"error", "page must be at least 1"}};
                         res.set_content(err.dump(), "application/json");
@@ -2353,6 +2372,7 @@ int main() {
                     if (body.contains("pageSize")) {
                       const auto &size_node = body.at("pageSize");
                       if (!size_node.is_number_integer()) {
+                        std::cerr << "[admin][transactions] Validation failed: pageSize not integer" << std::endl;
                         res.status = 400;
                         json err = {{"error", "pageSize must be an integer"}};
                         res.set_content(err.dump(), "application/json");
@@ -2361,6 +2381,7 @@ int main() {
                       }
                       page_size = size_node.get<int>();
                       if (page_size < 1 || page_size > 500) {
+                        std::cerr << "[admin][transactions] Validation failed: pageSize out of range" << std::endl;
                         res.status = 422;
                         json err = {{"error", "pageSize must be between 1 and 500"}};
                         res.set_content(err.dump(), "application/json");
@@ -2372,6 +2393,7 @@ int main() {
                     std::optional<std::string> transaction_status;
                     if (body.contains("transactionStatus")) {
                       if (!body.at("transactionStatus").is_string()) {
+                        std::cerr << "[admin][transactions] Validation failed: transactionStatus not string" << std::endl;
                         res.status = 400;
                         json err = {{"error", "transactionStatus must be a string"}};
                         res.set_content(err.dump(), "application/json");
@@ -2386,12 +2408,14 @@ int main() {
                                        status_value.begin(),
                                        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
                         transaction_status = status_value;
+                        std::cerr << "[admin][transactions] transactionStatus='" << *transaction_status << "'" << std::endl;
                       }
                     }
 
                     std::optional<std::string> fields;
                     if (body.contains("fields")) {
                       if (!body.at("fields").is_string()) {
+                        std::cerr << "[admin][transactions] Validation failed: fields not string" << std::endl;
                         res.status = 400;
                         json err = {{"error", "fields must be a string"}};
                         res.set_content(err.dump(), "application/json");
@@ -2401,6 +2425,7 @@ int main() {
                       std::string fields_value = trim_copy(body.at("fields").get<std::string>());
                       if (!fields_value.empty()) {
                         fields = fields_value;
+                        std::cerr << "[admin][transactions] fields='" << *fields << "'" << std::endl;
                       }
                     }
 
@@ -2414,8 +2439,13 @@ int main() {
                                                                          page_size_param,
                                                                          transaction_status,
                                                                          fields);
+                    std::cerr << "[admin][transactions] PayPal request dispatched start='" << start_date
+                              << "' end='" << end_date << "' page=" << page << " pageSize=" << page_size
+                              << std::endl;
 
                     if (!remote.ok()) {
+                      std::cerr << "[admin][transactions] PayPal request failed status=" << remote.status
+                                << " message='" << remote.error_message << "'" << std::endl;
                       res.status = remote.status == 0 ? 502 : static_cast<int>(remote.status);
                       json err = {
                           {"error", "Failed to retrieve transactions from PayPal"},
@@ -2460,7 +2490,10 @@ int main() {
                       std::cout << "[paypal][admin] Transaction search start=" << start_date
                                 << " end=" << end_date << " page=" << page << " size=" << page_size
                                 << " returned=" << returned << std::endl;
+                      std::cerr << "[admin][transactions] PayPal response parsed successfully" << std::endl;
                     } catch (const json::parse_error &err) {
+                      std::cerr << "[admin][transactions] Failed to parse PayPal response: " << err.what()
+                                << std::endl;
                       res.status = 502;
                       json err_payload = {
                           {"error", "Unable to parse PayPal response"},
@@ -2469,6 +2502,7 @@ int main() {
                       res.set_content(err_payload.dump(), "application/json");
                     }
                   } catch (const json::parse_error &err) {
+                    std::cerr << "[admin][transactions] JSON parse error: " << err.what() << std::endl;
                     res.status = 400;
                     json err_payload = {
                         {"error", "Invalid JSON payload"},
@@ -2476,6 +2510,7 @@ int main() {
                     };
                     res.set_content(err_payload.dump(), "application/json");
                   } catch (const std::exception &ex) {
+                    std::cerr << "[admin][transactions] Unexpected exception: " << ex.what() << std::endl;
                     res.status = 500;
                     json err = {
                         {"error", "Transaction search failed"},
