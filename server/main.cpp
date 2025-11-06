@@ -418,8 +418,19 @@ bool is_request_origin_allowed(const httplib::Request &req,
     return true;
   }
 
-  const auto host = req.get_header_value("Host");
-  std::cerr << "[cors] Denying origin '" << origin << "' for host '" << host << "'" << std::endl;
+  const auto host_header = trim_copy(req.get_header_value("Host"));
+  if (!host_header.empty()) {
+    const auto scheme_end = origin.find("://");
+    if (scheme_end != std::string::npos) {
+      const std::string scheme = to_lower_copy(origin.substr(0, scheme_end));
+      const std::string reconstructed_origin = scheme + "://" + host_header;
+      if (normalize_origin(reconstructed_origin) == normalize_origin(origin)) {
+        return true;
+      }
+    }
+  }
+
+  std::cerr << "[cors] Denying origin '" << origin << "' for host '" << host_header << "'" << std::endl;
   return false;
 }
 
