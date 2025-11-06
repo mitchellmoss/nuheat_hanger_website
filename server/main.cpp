@@ -321,6 +321,28 @@ std::vector<std::string> parse_allowed_origins(const std::string &value) {
   return origins;
 }
 
+std::string extract_host_from_authority(const std::string &authority) {
+  auto trimmed = trim_copy(authority);
+  if (trimmed.empty()) {
+    return trimmed;
+  }
+
+  if (trimmed.front() == '[') {
+    const auto closing = trimmed.find(']');
+    if (closing != std::string::npos) {
+      return to_lower_copy(trimmed.substr(0, closing + 1));
+    }
+    return to_lower_copy(trimmed);
+  }
+
+  const auto colon_pos = trimmed.find(':');
+  if (colon_pos != std::string::npos) {
+    return to_lower_copy(trimmed.substr(0, colon_pos));
+  }
+
+  return to_lower_copy(trimmed);
+}
+
 std::string normalize_origin(const std::string &origin) {
   auto trimmed = trim_copy(origin);
   if (trimmed.empty()) {
@@ -423,8 +445,26 @@ bool is_request_origin_allowed(const httplib::Request &req,
     const auto scheme_end = origin.find("://");
     if (scheme_end != std::string::npos) {
       const std::string scheme = to_lower_copy(origin.substr(0, scheme_end));
-      const std::string reconstructed_origin = scheme + "://" + host_header;
-      if (normalize_origin(reconstructed_origin) == normalize_origin(origin)) {
+      const std::string authority = origin.substr(scheme_end + 3);
+      const auto slash_pos = authority.find('/');
+      const std::string origin_authority = (slash_pos == std::string::npos) ? authority : authority.substr(0, slash_pos);
+      const std::string origin_host = extract_host_from_authority(origin_authority);
+      const std::string request_host = extract_host_from_authority(host_header);
+      const std::string normalized_origin = normalize_origin(origin);
+      if (!origin_host.empty() && origin_host == request_host) {
+        const std::string reconstructed_origin = scheme + "://" + host_header;
+        const std::string normalized_reconstructed = normalize_origin(reconstructed_origin);
+        if (normalized_reconstructed == normalized_origin) {
+          return true;
+        }
+        const std::string normalized_host_only = normalize_origin(scheme + "://" + origin_host);
+        if (normalized_host_only == normalized_origin) {
+          return true;
+        }
+      }
+
+      const std::string normalized_host_only = normalize_origin(scheme + "://" + host_header);
+      if (normalized_host_only == normalized_origin) {
         return true;
       }
     }
