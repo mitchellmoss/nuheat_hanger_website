@@ -2445,7 +2445,8 @@ int main() {
 
                     if (!remote.ok()) {
                       std::cerr << "[admin][transactions] PayPal request failed status=" << remote.status
-                                << " message='" << remote.error_message << "'" << std::endl;
+                                << " message='" << remote.error_message << "' body='" << remote.body << "'"
+                                << std::endl;
                       res.status = remote.status == 0 ? 502 : static_cast<int>(remote.status);
                       json err = {
                           {"error", "Failed to retrieve transactions from PayPal"},
