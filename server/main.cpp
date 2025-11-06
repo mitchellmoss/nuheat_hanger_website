@@ -2452,6 +2452,12 @@ int main() {
                           {"status", remote.status},
                           {"message", remote.error_message},
                       };
+                      if (remote.status == 403) {
+                        err["error"] =
+                            "PayPal rejected the transaction search request (HTTP 403). Verify that the account has Transaction Search enabled in the PayPal developer dashboard.";
+                        err["hint"] =
+                            "In developer.paypal.com, open your REST app and enable the Transaction Search capability, then retry.";
+                      }
                       if (!remote.body.empty()) {
                         err["body"] = remote.body;
                       }

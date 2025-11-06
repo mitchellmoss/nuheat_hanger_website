@@ -153,6 +153,195 @@
       min-width: 130px;
     }
 
+    .transactions-output {
+      margin-top: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .transactions-grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    }
+
+    .transaction-card {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 16px;
+      padding: 20px 22px;
+      box-shadow: 0 18px 35px rgba(15, 23, 42, 0.45);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .transaction-card__header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+    }
+
+    .transaction-card__title {
+      margin: 0;
+      font-size: 1.05rem;
+      font-weight: 600;
+    }
+
+    .transaction-status-badge {
+      padding: 4px 12px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: rgba(148, 163, 184, 0.25);
+      color: #e2e8f0;
+      white-space: nowrap;
+    }
+
+    .transaction-status-badge--s {
+      background: rgba(34, 197, 94, 0.18);
+      color: #4ade80;
+    }
+
+    .transaction-status-badge--p,
+    .transaction-status-badge--pending {
+      background: rgba(250, 204, 21, 0.18);
+      color: #facc15;
+    }
+
+    .transaction-status-badge--d,
+    .transaction-status-badge--f,
+    .transaction-status-badge--failed,
+    .transaction-status-badge--denied {
+      background: rgba(248, 113, 113, 0.18);
+      color: #f87171;
+    }
+
+    .transaction-status-badge--c,
+    .transaction-status-badge--cancelled,
+    .transaction-status-badge--v,
+    .transaction-status-badge--voided {
+      background: rgba(148, 163, 184, 0.25);
+      color: #cbd5f5;
+    }
+
+    .transaction-card__amount {
+      font-size: 1.65rem;
+      font-weight: 700;
+      margin: 0;
+      color: #38bdf8;
+    }
+
+    .transaction-card__subheader {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .transaction-card__section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .transaction-card__section-title {
+      font-size: 0.75rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: #94a3b8;
+    }
+
+    .transaction-card__section-content {
+      font-size: 0.92rem;
+      display: grid;
+      gap: 4px;
+    }
+
+    .transaction-card__meta {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+    }
+
+    .transaction-card__meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 0.9rem;
+    }
+
+    .transaction-card__meta-label {
+      color: #94a3b8;
+      font-weight: 600;
+    }
+
+    .transaction-card__meta-value {
+      text-align: right;
+      word-break: break-word;
+    }
+
+    .transaction-card__items {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .transaction-card__items thead {
+      background: rgba(148, 163, 184, 0.14);
+    }
+
+    .transaction-card__items th,
+    .transaction-card__items td {
+      padding: 6px 10px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      text-align: left;
+    }
+
+    .transaction-card__items td {
+      color: #e2e8f0;
+    }
+
+    .transaction-card__footer {
+      display: grid;
+      gap: 2px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .transactions-raw {
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.45);
+      padding: 12px 16px;
+    }
+
+    .transactions-raw > summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: #94a3b8;
+    }
+
+    .transactions-raw[open] > pre {
+      margin-top: 16px;
+    }
+
+    .transaction-empty {
+      padding: 28px;
+      border-radius: 14px;
+      border: 1px dashed rgba(148, 163, 184, 0.35);
+      text-align: center;
+      color: #94a3b8;
+      background: rgba(15, 23, 42, 0.35);
+    }
+
     .toolbar {
       display: flex;
       justify-content: flex-end;
@@ -168,6 +357,10 @@
 
       .toolbar {
         justify-content: stretch;
+      }
+
+      .transactions-grid {
+        grid-template-columns: 1fr;
       }
     }
   </style>
@@ -279,7 +472,13 @@
           <button type="button" class="secondary" id="transactions-next" disabled>Next Page</button>
         </div>
 
-        <pre id="transactions-result" hidden></pre>
+        <div class="transactions-output" id="transactions-output" hidden>
+          <div id="transactions-list" class="transactions-grid" hidden></div>
+          <details id="transactions-raw" class="transactions-raw" hidden>
+            <summary>Raw JSON</summary>
+            <pre id="transactions-result"></pre>
+          </details>
+        </div>
       </section>
     </section>
   </main>
@@ -308,6 +507,9 @@
       const transactionsNav = document.getElementById('transactions-nav');
       const transactionsPrevButton = document.getElementById('transactions-prev');
       const transactionsNextButton = document.getElementById('transactions-next');
+      const transactionsOutput = document.getElementById('transactions-output');
+      const transactionsList = document.getElementById('transactions-list');
+      const transactionsRaw = document.getElementById('transactions-raw');
 
       let lastTransactionParams = null;
       let lastTransactionLinks = { prev: null, next: null };
@@ -355,6 +557,131 @@
           return null;
         }
         return date.toISOString();
+      }
+
+      const TRANSACTION_STATUS_LABELS = {
+        S: 'Completed',
+        P: 'Pending',
+        V: 'Voided',
+        D: 'Denied',
+        F: 'Failed',
+        C: 'Cancelled',
+      };
+
+      function formatCurrency(amount) {
+        if (!amount) {
+          return '—';
+        }
+        const currency = amount.currency_code || amount.currencyCode || '';
+        const rawValue = typeof amount.value === 'number' ? amount.value : Number.parseFloat(amount.value);
+        if (Number.isFinite(rawValue)) {
+          if (currency) {
+            try {
+              return new Intl.NumberFormat(undefined, {
+                style: 'currency',
+                currency,
+              }).format(rawValue);
+            } catch (err) {
+              // ignore and fall back to manual formatting
+            }
+          }
+          return `${currency ? `${currency} ` : ''}${rawValue.toFixed(2)}`;
+        }
+        if (amount.value !== undefined && amount.value !== null) {
+          return currency ? `${currency} ${amount.value}` : String(amount.value);
+        }
+        return currency || '—';
+      }
+
+      function mergeMoney(base, delta) {
+        if (!base || !delta) {
+          return null;
+        }
+        const currency = base.currency_code || delta.currency_code || base.currencyCode || delta.currencyCode;
+        const baseValue = Number.parseFloat(base.value);
+        const deltaValue = Number.parseFloat(delta.value);
+        if (!Number.isFinite(baseValue) || !Number.isFinite(deltaValue)) {
+          return null;
+        }
+        return {
+          value: baseValue + deltaValue,
+          currency_code: currency,
+        };
+      }
+
+      function formatDateTime(value) {
+        if (!value) {
+          return '—';
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return value;
+        }
+        return date.toLocaleString(undefined, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+        });
+      }
+
+      function formatFullName(name) {
+        if (!name) {
+          return '';
+        }
+        const parts = [];
+        if (name.given_name) {
+          parts.push(name.given_name);
+        }
+        if (name.surname) {
+          parts.push(name.surname);
+        }
+        if (!parts.length && name.full_name) {
+          parts.push(name.full_name);
+        }
+        if (!parts.length && name.alternate_full_name) {
+          parts.push(name.alternate_full_name);
+        }
+        return parts.join(' ');
+      }
+
+      function appendInfoLine(container, text) {
+        if (!container || !text) {
+          return;
+        }
+        const line = document.createElement('span');
+        line.textContent = text;
+        container.appendChild(line);
+      }
+
+      function buildMetaRow(label, value) {
+        const row = document.createElement('div');
+        row.className = 'transaction-card__meta-row';
+
+        const labelEl = document.createElement('span');
+        labelEl.className = 'transaction-card__meta-label';
+        labelEl.textContent = label;
+
+        const valueEl = document.createElement('span');
+        valueEl.className = 'transaction-card__meta-value';
+        valueEl.textContent = value || '—';
+
+        row.append(labelEl, valueEl);
+        return row;
+      }
+
+      function appendMetaRow(container, label, value) {
+        if (!container || value === undefined || value === null || value === '') {
+          return;
+        }
+        container.appendChild(buildMetaRow(label, value));
+      }
+
+      function formatStatus(code) {
+        if (!code) {
+          return 'Unknown';
+        }
+        const upper = String(code).toUpperCase();
+        const label = TRANSACTION_STATUS_LABELS[upper] || 'Unknown';
+        return `${label} (${upper})`;
       }
 
       function setTransactionsStatus(message, isError = false) {
@@ -526,14 +853,265 @@
         }
       }
 
-      function showTransactionsPayload(response) {
-        if (!transactionsResult || !transactionsMeta) {
+      function renderTransactionCards(payload) {
+        if (!transactionsList) {
           return;
         }
+
+        transactionsList.innerHTML = '';
+
+        const createSection = (title) => {
+          const section = document.createElement('div');
+          section.className = 'transaction-card__section';
+          const heading = document.createElement('div');
+          heading.className = 'transaction-card__section-title';
+          heading.textContent = title;
+          const content = document.createElement('div');
+          content.className = 'transaction-card__section-content';
+          section.append(heading, content);
+          return { section, content };
+        };
+
+        if (!payload || !Array.isArray(payload.transaction_details) || payload.transaction_details.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'transaction-empty';
+          empty.textContent = 'No transactions returned for this search.';
+          transactionsList.appendChild(empty);
+          transactionsList.hidden = false;
+          return;
+        }
+
+        for (const detail of payload.transaction_details) {
+          const info = detail && detail.transaction_info ? detail.transaction_info : {};
+          const payer = detail && detail.payer_info ? detail.payer_info : {};
+          const cart = detail && detail.cart_info ? detail.cart_info : {};
+          const shipping = detail && detail.shipping_info ? detail.shipping_info : {};
+
+          const card = document.createElement('article');
+          card.className = 'transaction-card';
+
+          const header = document.createElement('div');
+          header.className = 'transaction-card__header';
+
+          const title = document.createElement('h3');
+          title.className = 'transaction-card__title';
+          title.textContent = info.transaction_id || '(missing transaction id)';
+          header.appendChild(title);
+
+          if (info.transaction_status) {
+            const badge = document.createElement('span');
+            const statusClass = String(info.transaction_status).toLowerCase();
+            badge.className = `transaction-status-badge transaction-status-badge--${statusClass}`;
+            badge.textContent = formatStatus(info.transaction_status);
+            header.appendChild(badge);
+          }
+
+          card.appendChild(header);
+
+          const amountEl = document.createElement('p');
+          amountEl.className = 'transaction-card__amount';
+          amountEl.textContent = formatCurrency(info.transaction_amount);
+          card.appendChild(amountEl);
+
+          const subheader = document.createElement('div');
+          subheader.className = 'transaction-card__subheader';
+
+          if (info.transaction_event_code) {
+            const eventEl = document.createElement('span');
+            eventEl.textContent = `Event ${info.transaction_event_code}`;
+            subheader.appendChild(eventEl);
+          }
+
+          if (info.instrument_type || info.instrument_sub_type) {
+            const instrumentEl = document.createElement('span');
+            if (info.instrument_type && info.instrument_sub_type) {
+              instrumentEl.textContent = `${info.instrument_type} • ${info.instrument_sub_type}`;
+            } else {
+              instrumentEl.textContent = info.instrument_type || info.instrument_sub_type;
+            }
+            subheader.appendChild(instrumentEl);
+          }
+
+          if (info.transaction_subject) {
+            const subjectEl = document.createElement('span');
+            subjectEl.textContent = info.transaction_subject;
+            subheader.appendChild(subjectEl);
+          }
+
+          if (info.custom_field) {
+            const memoEl = document.createElement('span');
+            memoEl.textContent = info.custom_field;
+            subheader.appendChild(memoEl);
+          }
+
+          if (subheader.childElementCount > 0) {
+            card.appendChild(subheader);
+          }
+
+          const metaContainer = document.createElement('div');
+          metaContainer.className = 'transaction-card__meta';
+
+          if (info.transaction_amount) {
+            appendMetaRow(metaContainer, 'Gross', formatCurrency(info.transaction_amount));
+          }
+          if (info.shipping_amount) {
+            appendMetaRow(metaContainer, 'Shipping', formatCurrency(info.shipping_amount));
+          }
+          if (info.fee_amount) {
+            appendMetaRow(metaContainer, 'Fee', formatCurrency(info.fee_amount));
+          }
+          const netAmount = mergeMoney(info.transaction_amount, info.fee_amount);
+          if (netAmount) {
+            appendMetaRow(metaContainer, 'Net', formatCurrency(netAmount));
+          }
+          if (info.available_balance) {
+            appendMetaRow(metaContainer, 'Available After', formatCurrency(info.available_balance));
+          }
+          if (info.ending_balance) {
+            appendMetaRow(metaContainer, 'Ending Balance', formatCurrency(info.ending_balance));
+          }
+          if (info.paypal_reference_id) {
+            const refText = info.paypal_reference_id_type
+              ? `${info.paypal_reference_id} (${info.paypal_reference_id_type})`
+              : info.paypal_reference_id;
+            appendMetaRow(metaContainer, 'PayPal Reference', refText);
+          }
+          if (info.protection_eligibility) {
+            appendMetaRow(metaContainer, 'Protection', info.protection_eligibility);
+          }
+
+          if (metaContainer.childElementCount > 0) {
+            card.appendChild(metaContainer);
+          }
+
+          const payerSection = createSection('Payer');
+          const payerName = formatFullName(payer.payer_name);
+          if (payerName) {
+            appendInfoLine(payerSection.content, payerName);
+          }
+          if (payer.email_address) {
+            appendInfoLine(payerSection.content, `Email: ${payer.email_address}`);
+          }
+          if (payer.account_id) {
+            appendInfoLine(payerSection.content, `Account: ${payer.account_id}`);
+          }
+          if (payer.country_code) {
+            appendInfoLine(payerSection.content, `Country: ${payer.country_code}`);
+          }
+          if (payerSection.content.childElementCount > 0) {
+            card.appendChild(payerSection.section);
+          }
+
+          const shippingSection = createSection('Shipping');
+          const shippingName = typeof shipping.name === 'string'
+            ? shipping.name
+            : formatFullName(shipping.name);
+          if (shippingName) {
+            appendInfoLine(shippingSection.content, shippingName);
+          }
+          const shippingAddress = shipping.address || shipping.shipping_address;
+          if (shippingAddress) {
+            const addressParts = [
+              shippingAddress.address_line_1 || shippingAddress.line1,
+              shippingAddress.address_line_2 || shippingAddress.line2,
+              [shippingAddress.admin_area_2, shippingAddress.admin_area_1]
+                .filter(Boolean)
+                .join(', '),
+              [shippingAddress.postal_code, shippingAddress.country_code]
+                .filter(Boolean)
+                .join(' '),
+            ].filter((part) => part && part.trim());
+            if (addressParts.length) {
+              appendInfoLine(shippingSection.content, addressParts.join(' • '));
+            }
+          }
+          if (shippingSection.content.childElementCount > 0) {
+            card.appendChild(shippingSection.section);
+          }
+
+          const items = Array.isArray(cart.item_details) ? cart.item_details : [];
+          if (items.length) {
+            const itemsSection = createSection('Items');
+            const table = document.createElement('table');
+            table.className = 'transaction-card__items';
+
+            const thead = document.createElement('thead');
+            const headRow = document.createElement('tr');
+            ['Item', 'Qty', 'Unit', 'Total'].forEach((heading) => {
+              const th = document.createElement('th');
+              th.textContent = heading;
+              headRow.appendChild(th);
+            });
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            for (const item of items) {
+              const row = document.createElement('tr');
+
+              const nameCell = document.createElement('td');
+              nameCell.textContent = item.item_name || item.item_description || item.item_code || '—';
+              row.appendChild(nameCell);
+
+              const qtyCell = document.createElement('td');
+              qtyCell.textContent = item.item_quantity || '—';
+              row.appendChild(qtyCell);
+
+              const unitCell = document.createElement('td');
+              unitCell.textContent = formatCurrency(item.item_unit_price || item.item_amount);
+              row.appendChild(unitCell);
+
+              const totalCell = document.createElement('td');
+              totalCell.textContent = formatCurrency(item.total_item_amount || item.item_amount);
+              row.appendChild(totalCell);
+
+              tbody.appendChild(row);
+            }
+
+            table.appendChild(tbody);
+            itemsSection.content.appendChild(table);
+            card.appendChild(itemsSection.section);
+          }
+
+          const footer = document.createElement('div');
+          footer.className = 'transaction-card__footer';
+          if (info.transaction_initiation_date) {
+            appendInfoLine(footer, `Initiated: ${formatDateTime(info.transaction_initiation_date)}`);
+          }
+          if (info.transaction_updated_date) {
+            appendInfoLine(footer, `Updated: ${formatDateTime(info.transaction_updated_date)}`);
+          }
+          if (footer.childElementCount > 0) {
+            card.appendChild(footer);
+          }
+
+          transactionsList.appendChild(card);
+        }
+
+        transactionsList.hidden = false;
+      }
+
+      function showTransactionsPayload(response) {
+        if (!transactionsMeta) {
+          return;
+        }
+
         if (!response || !response.payload) {
           clearTransactionNavigation();
-          transactionsResult.hidden = true;
           transactionsMeta.hidden = true;
+          if (transactionsResult) {
+            transactionsResult.textContent = '';
+          }
+          if (transactionsOutput) {
+            transactionsOutput.hidden = true;
+          }
+          if (transactionsList) {
+            transactionsList.innerHTML = '';
+            transactionsList.hidden = true;
+          }
+          if (transactionsRaw) {
+            transactionsRaw.hidden = true;
+          }
           return;
         }
 
@@ -552,14 +1130,24 @@
         }
         if (transactionsLinks) {
           const links = Array.isArray(response.payload.links)
-            ? response.payload.links.map((link) => link && link.rel ? link.rel : '').filter(Boolean)
+            ? response.payload.links.map((link) => (link && link.rel ? link.rel : '')).filter(Boolean)
             : [];
           transactionsLinks.textContent = links.length ? links.join(', ') : 'none';
         }
 
         transactionsMeta.hidden = false;
-        transactionsResult.textContent = JSON.stringify(response.payload, null, 2);
-        transactionsResult.hidden = false;
+        if (transactionsOutput) {
+          transactionsOutput.hidden = false;
+        }
+
+        renderTransactionCards(response.payload);
+
+        if (transactionsResult) {
+          transactionsResult.textContent = JSON.stringify(response.payload, null, 2);
+        }
+        if (transactionsRaw) {
+          transactionsRaw.hidden = false;
+        }
       }
 
       function prepareDefaultTransactionRange() {
@@ -632,7 +1220,7 @@
           setStatus('Enter a PayPal order or capture id to get started.');
         }
         prepareDefaultTransactionRange();
-        if (!transactionsResult || transactionsResult.hidden) {
+        if (!transactionsOutput || transactionsOutput.hidden) {
           setTransactionsStatus('Select a time range and run a transaction search.');
         }
       }
