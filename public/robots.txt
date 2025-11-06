@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+
+# Block admin and API endpoints from indexing if exposed in future
+Disallow: /api/
+Disallow: /admin/
+
