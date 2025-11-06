@@ -965,7 +965,7 @@ const char kInlinePayPalHelper[] = R"(<script>
 
   function showFallbackMessage() {
     if (statusEl && !statusEl.textContent && !buttonsRendered) {
-      statusEl.textContent = 'Unable to load PayPal checkout. Refresh or email orders@nuheat-hanger.com to place your order.';
+      statusEl.textContent = 'Unable to load PayPal checkout. Refresh or email mitch.mossy@gmail.com to place your order.';
     }
   }
 
@@ -1097,7 +1097,7 @@ const char kInlinePayPalHelper[] = R"(<script>
           }
           console.error('Failed to create order', err);
           if (statusEl) {
-            statusEl.textContent = 'Unable to start checkout right now. Try again in a moment or email orders@nuheat-hanger.com.';
+            statusEl.textContent = 'Unable to start checkout right now. Try again in a moment or email mitch.mossy@gmail.com.';
           }
           throw err;
         });
@@ -1114,7 +1114,7 @@ const char kInlinePayPalHelper[] = R"(<script>
         }).catch(function (err) {
           console.error('Failed to capture order', err);
           if (statusEl) {
-            statusEl.textContent = 'We confirmed your payment with PayPal, but validation failed on our side. Please contact orders@nuheat-hanger.com with your transaction ID.';
+            statusEl.textContent = 'We confirmed your payment with PayPal, but validation failed on our side. Please contact mitch.mossy@gmail.com with your transaction ID.';
           }
           throw err;
         });
@@ -1124,7 +1124,7 @@ const char kInlinePayPalHelper[] = R"(<script>
         if (statusEl) {
           window.clearTimeout(fallbackTimer);
           fallbackTimer = null;
-          statusEl.textContent = 'Something went wrong with PayPal checkout. Try again or email orders@nuheat-hanger.com.';
+          statusEl.textContent = 'Something went wrong with PayPal checkout. Try again or email mitch.mossy@gmail.com.';
         }
       },
       onCancel: function () {
@@ -1147,7 +1147,7 @@ const char kInlinePayPalHelper[] = R"(<script>
       if (statusEl) {
         window.clearTimeout(fallbackTimer);
         fallbackTimer = null;
-        statusEl.textContent = 'Unable to load PayPal checkout. Refresh or email orders@nuheat-hanger.com to place your order.';
+        statusEl.textContent = 'Unable to load PayPal checkout. Refresh or email mitch.mossy@gmail.com to place your order.';
       }
       throw err;
     });
