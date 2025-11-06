@@ -162,32 +162,40 @@
 
     .transactions-grid {
       display: grid;
-      gap: 16px;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      align-items: stretch;
+      grid-auto-rows: 1fr;
     }
 
     .transaction-card {
-      background: rgba(15, 23, 42, 0.65);
+      background: rgba(15, 23, 42, 0.6);
       border: 1px solid rgba(148, 163, 184, 0.28);
-      border-radius: 16px;
-      padding: 20px 22px;
-      box-shadow: 0 18px 35px rgba(15, 23, 42, 0.45);
+      border-radius: 18px;
+      padding: 22px 24px 24px;
+      box-shadow: 0 18px 36px rgba(15, 23, 42, 0.45);
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 18px;
+      min-height: 100%;
+      line-height: 1.45;
     }
 
     .transaction-card__header {
       display: flex;
       justify-content: space-between;
-      align-items: flex-start;
+      align-items: center;
       gap: 16px;
+      flex-wrap: wrap;
     }
 
     .transaction-card__title {
       margin: 0;
       font-size: 1.05rem;
       font-weight: 600;
+      letter-spacing: 0.02em;
+      flex: 1 1 auto;
+      word-break: break-word;
     }
 
     .transaction-status-badge {
@@ -200,6 +208,7 @@
       background: rgba(148, 163, 184, 0.25);
       color: #e2e8f0;
       white-space: nowrap;
+      border: 1px solid rgba(148, 163, 184, 0.35);
     }
 
     .transaction-status-badge--s {
@@ -230,23 +239,32 @@
     }
 
     .transaction-card__amount {
-      font-size: 1.65rem;
+      font-size: 1.75rem;
       font-weight: 700;
       margin: 0;
       color: #38bdf8;
+      letter-spacing: -0.01em;
     }
 
     .transaction-card__subheader {
-      display: flex;
-      flex-direction: column;
-      gap: 6px;
-      font-size: 0.85rem;
+      display: grid;
+      gap: 4px;
+      font-size: 0.88rem;
       color: #94a3b8;
+    }
+
+    .transaction-card__subheader-line {
+      color: #cbd5f5;
+    }
+
+    .transaction-card__subject-line {
+      font-weight: 600;
+      color: #e2e8f0;
     }
 
     .transaction-card__section {
       display: grid;
-      gap: 8px;
+      gap: 10px;
     }
 
     .transaction-card__section-title {
@@ -257,33 +275,50 @@
       color: #94a3b8;
     }
 
+    .transaction-card__section + .transaction-card__section {
+      padding-top: 14px;
+      border-top: 1px solid rgba(148, 163, 184, 0.18);
+    }
+
     .transaction-card__section-content {
       font-size: 0.92rem;
       display: grid;
-      gap: 4px;
+      gap: 6px;
+    }
+
+    .transaction-card__section-content span {
+      display: block;
+      word-break: break-word;
     }
 
     .transaction-card__meta {
       display: grid;
-      gap: 6px;
+      gap: 10px;
       margin: 0;
     }
 
     .transaction-card__meta-row {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
+      display: grid;
+      grid-template-columns: minmax(96px, auto) 1fr;
+      gap: 8px;
       font-size: 0.9rem;
+      align-items: start;
+      word-break: break-word;
     }
 
     .transaction-card__meta-label {
       color: #94a3b8;
       font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.72rem;
     }
 
     .transaction-card__meta-value {
-      text-align: right;
+      text-align: left;
       word-break: break-word;
+      color: #e2e8f0;
+      font-weight: 600;
     }
 
     .transaction-card__items {
@@ -292,6 +327,7 @@
       font-size: 0.85rem;
       border-radius: 12px;
       overflow: hidden;
+      table-layout: fixed;
     }
 
     .transaction-card__items thead {
@@ -303,6 +339,8 @@
       padding: 6px 10px;
       border: 1px solid rgba(148, 163, 184, 0.18);
       text-align: left;
+      vertical-align: top;
+      word-break: break-word;
     }
 
     .transaction-card__items td {
@@ -311,9 +349,15 @@
 
     .transaction-card__footer {
       display: grid;
-      gap: 2px;
+      gap: 4px;
       font-size: 0.85rem;
       color: #94a3b8;
+      margin-top: auto;
+    }
+
+    .transaction-card__footer span {
+      display: block;
+      word-break: break-word;
     }
 
     .transactions-raw {
@@ -321,12 +365,31 @@
       border-radius: 12px;
       background: rgba(15, 23, 42, 0.45);
       padding: 12px 16px;
+      width: 100%;
     }
 
     .transactions-raw > summary {
       cursor: pointer;
       font-weight: 600;
       color: #94a3b8;
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      list-style: none;
+    }
+
+    .transactions-raw > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .transactions-raw > summary::after {
+      content: 'v';
+      font-size: 0.75rem;
+      transition: transform 0.2s ease;
+    }
+
+    .transactions-raw[open] > summary::after {
+      transform: rotate(-180deg);
     }
 
     .transactions-raw[open] > pre {
@@ -623,6 +686,29 @@
         });
       }
 
+      function getTransactionTimestamp(detail) {
+        if (!detail || !detail.transaction_info) {
+          return Number.NEGATIVE_INFINITY;
+        }
+        const info = detail.transaction_info;
+        const primary = info.transaction_initiation_date || info.transaction_updated_date;
+        const secondary = info.transaction_updated_date || info.transaction_initiation_date;
+
+        const tryParse = (value) => {
+          if (!value) {
+            return Number.NEGATIVE_INFINITY;
+          }
+          const parsed = Date.parse(value);
+          return Number.isNaN(parsed) ? Number.NEGATIVE_INFINITY : parsed;
+        };
+
+        const primaryTimestamp = tryParse(primary);
+        if (primaryTimestamp !== Number.NEGATIVE_INFINITY) {
+          return primaryTimestamp;
+        }
+        return tryParse(secondary);
+      }
+
       function formatFullName(name) {
         if (!name) {
           return '';
@@ -643,12 +729,15 @@
         return parts.join(' ');
       }
 
-      function appendInfoLine(container, text) {
+      function appendInfoLine(container, text, className) {
         if (!container || !text) {
           return;
         }
         const line = document.createElement('span');
         line.textContent = text;
+        if (className) {
+          line.className = className;
+        }
         container.appendChild(line);
       }
 
@@ -881,7 +970,19 @@
           return;
         }
 
-        for (const detail of payload.transaction_details) {
+        const details = [...payload.transaction_details];
+        if (details.length > 1) {
+          details.sort((a, b) => {
+            const tsA = getTransactionTimestamp(a);
+            const tsB = getTransactionTimestamp(b);
+            if (tsA === tsB) {
+              return 0;
+            }
+            return tsB - tsA;
+          });
+        }
+
+        for (const detail of details) {
           const info = detail && detail.transaction_info ? detail.transaction_info : {};
           const payer = detail && detail.payer_info ? detail.payer_info : {};
           const cart = detail && detail.cart_info ? detail.cart_info : {};
@@ -917,74 +1018,72 @@
           subheader.className = 'transaction-card__subheader';
 
           if (info.transaction_event_code) {
-            const eventEl = document.createElement('span');
-            eventEl.textContent = `Event ${info.transaction_event_code}`;
-            subheader.appendChild(eventEl);
+            appendInfoLine(subheader, `Event ${info.transaction_event_code}`, 'transaction-card__subheader-line');
           }
 
-          if (info.instrument_type || info.instrument_sub_type) {
-            const instrumentEl = document.createElement('span');
-            if (info.instrument_type && info.instrument_sub_type) {
-              instrumentEl.textContent = `${info.instrument_type} • ${info.instrument_sub_type}`;
-            } else {
-              instrumentEl.textContent = info.instrument_type || info.instrument_sub_type;
-            }
-            subheader.appendChild(instrumentEl);
+          const instrumentParts = [info.instrument_type, info.instrument_sub_type]
+            .map((part) => (part ? String(part).trim() : ''))
+            .filter(Boolean);
+          if (instrumentParts.length) {
+            appendInfoLine(subheader, instrumentParts.join(' • '), 'transaction-card__subheader-line');
           }
 
           if (info.transaction_subject) {
-            const subjectEl = document.createElement('span');
-            subjectEl.textContent = info.transaction_subject;
-            subheader.appendChild(subjectEl);
+            const subjectParts = String(info.transaction_subject)
+              .split(';')
+              .map((part) => part.trim())
+              .filter(Boolean);
+            const subjectLines = subjectParts.length ? subjectParts : [String(info.transaction_subject)];
+            subjectLines.forEach((line) => appendInfoLine(subheader, line, 'transaction-card__subject-line'));
           }
 
           if (info.custom_field) {
-            const memoEl = document.createElement('span');
-            memoEl.textContent = info.custom_field;
-            subheader.appendChild(memoEl);
+            appendInfoLine(subheader, String(info.custom_field), 'transaction-card__subheader-line');
           }
 
           if (subheader.childElementCount > 0) {
             card.appendChild(subheader);
           }
 
-          const metaContainer = document.createElement('div');
-          metaContainer.className = 'transaction-card__meta';
+          const financialSection = createSection('Financial Summary');
+          const financialList = document.createElement('div');
+          financialList.className = 'transaction-card__meta';
+          financialSection.content.appendChild(financialList);
 
           if (info.transaction_amount) {
-            appendMetaRow(metaContainer, 'Gross', formatCurrency(info.transaction_amount));
+            appendMetaRow(financialList, 'Gross', formatCurrency(info.transaction_amount));
           }
           if (info.shipping_amount) {
-            appendMetaRow(metaContainer, 'Shipping', formatCurrency(info.shipping_amount));
+            appendMetaRow(financialList, 'Shipping', formatCurrency(info.shipping_amount));
           }
           if (info.fee_amount) {
-            appendMetaRow(metaContainer, 'Fee', formatCurrency(info.fee_amount));
+            appendMetaRow(financialList, 'Fee', formatCurrency(info.fee_amount));
           }
           const netAmount = mergeMoney(info.transaction_amount, info.fee_amount);
           if (netAmount) {
-            appendMetaRow(metaContainer, 'Net', formatCurrency(netAmount));
+            appendMetaRow(financialList, 'Net', formatCurrency(netAmount));
           }
           if (info.available_balance) {
-            appendMetaRow(metaContainer, 'Available After', formatCurrency(info.available_balance));
+            appendMetaRow(financialList, 'Available After', formatCurrency(info.available_balance));
           }
           if (info.ending_balance) {
-            appendMetaRow(metaContainer, 'Ending Balance', formatCurrency(info.ending_balance));
+            appendMetaRow(financialList, 'Ending Balance', formatCurrency(info.ending_balance));
           }
           if (info.paypal_reference_id) {
             const refText = info.paypal_reference_id_type
               ? `${info.paypal_reference_id} (${info.paypal_reference_id_type})`
               : info.paypal_reference_id;
-            appendMetaRow(metaContainer, 'PayPal Reference', refText);
+            appendMetaRow(financialList, 'PayPal Reference', refText);
           }
           if (info.protection_eligibility) {
-            appendMetaRow(metaContainer, 'Protection', info.protection_eligibility);
+            appendMetaRow(financialList, 'Protection', info.protection_eligibility);
           }
 
-          if (metaContainer.childElementCount > 0) {
-            card.appendChild(metaContainer);
+          if (financialList.childElementCount > 0) {
+            card.appendChild(financialSection.section);
           }
 
-          const payerSection = createSection('Payer');
+          const payerSection = createSection('Customer');
           const payerName = formatFullName(payer.payer_name);
           if (payerName) {
             appendInfoLine(payerSection.content, payerName);
@@ -994,6 +1093,12 @@
           }
           if (payer.account_id) {
             appendInfoLine(payerSection.content, `Account: ${payer.account_id}`);
+          }
+          if (info.paypal_account_id) {
+            appendInfoLine(payerSection.content, `PayPal Account: ${info.paypal_account_id}`);
+          }
+          if (payer.payer_status) {
+            appendInfoLine(payerSection.content, `Status: ${payer.payer_status}`);
           }
           if (payer.country_code) {
             appendInfoLine(payerSection.content, `Country: ${payer.country_code}`);
@@ -1111,6 +1216,7 @@
           }
           if (transactionsRaw) {
             transactionsRaw.hidden = true;
+            transactionsRaw.open = false;
           }
           return;
         }
@@ -1147,6 +1253,7 @@
         }
         if (transactionsRaw) {
           transactionsRaw.hidden = false;
+          transactionsRaw.open = false;
         }
       }
 
